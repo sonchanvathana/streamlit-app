@@ -120,9 +120,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Add this at the beginning of your script to enable better error tracking
-st.set_option('deprecation.showPyplotGlobalUse', False)
-
 def load_data(file_path, sheet_name):
     """Load and process data from Excel file"""
     try:
