@@ -13,6 +13,17 @@ from shapely.ops import unary_union
 import alphashape
 import base64
 import numpy as np
+from io import BytesIO
+import matplotlib.pyplot as plt
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, HRFlowable
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+import tempfile
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 # Set page configuration
 st.set_page_config(
@@ -228,22 +239,30 @@ def create_plotly_progress_chart(df_forecast, df_actual, chart_title):
 
             # Calculate gaps for each actual data point
             actual_dates = actual_cumulative.index
-            # Get forecast values for actual dates
-            forecast_values = []
-            for date in actual_dates:
-                # Find the forecast value on or before this date
-                mask = forecast_cumulative.index <= date
-                if mask.any():
-                    forecast_values.append(forecast_cumulative[mask].iloc[-1])
-                else:
-                    forecast_values.append(0)
+            gaps = []
             
-            forecast_series = pd.Series(forecast_values, index=actual_dates)
-            gaps = actual_cumulative - forecast_series
+            # Get all dates up to each actual date
+            for date in actual_dates:
+                # Get forecast target for this date
+                forecast_mask = forecast_cumulative.index <= date
+                if forecast_mask.any():
+                    forecast_value = forecast_cumulative[forecast_mask].iloc[-1]
+                else:
+                    forecast_value = 0
+                
+                # Get actual completions up to this date
+                actual_value = actual_cumulative[date]
+                
+                # Calculate gap
+                gap = actual_value - forecast_value
+                gaps.append(gap)
+            
+            # Create gap series
+            gap_series = pd.Series(gaps, index=actual_dates)
             
             # Split gaps into positive and negative
-            positive_gaps = gaps.copy()
-            negative_gaps = gaps.copy()
+            positive_gaps = gap_series.copy()
+            negative_gaps = gap_series.copy()
             positive_gaps[positive_gaps <= 0] = None
             negative_gaps[negative_gaps > 0] = None
             
@@ -251,18 +270,15 @@ def create_plotly_progress_chart(df_forecast, df_actual, chart_title):
             if not positive_gaps.isna().all():
                 fig.add_trace(
                     go.Bar(
-                        x=actual_dates,
-                        y=positive_gaps,
+                        x=positive_gaps.index,
+                        y=positive_gaps.values,
                         name="Ahead of Target",
                         text=[f"+{int(gap):,d}" if not pd.isna(gap) else "" for gap in positive_gaps],
                         textposition="outside",
                         marker=dict(
                             color=colors['ahead'],
                             opacity=0.7,
-                            line=dict(
-                                color='rgba(0,0,0,0.1)',
-                                width=1
-                            )
+                            line=dict(color='rgba(0,0,0,0.1)', width=1)
                         ),
                         hovertemplate=(
                             "<b>Implementation Gap</b><br>" +
@@ -270,7 +286,7 @@ def create_plotly_progress_chart(df_forecast, df_actual, chart_title):
                             "Gap: %{y:+,.0f} sites<br>" +
                             "<extra></extra>"
                         ),
-                        yaxis='y2'  # Use secondary y-axis for gaps
+                        yaxis='y2'
                     )
                 )
             
@@ -278,18 +294,15 @@ def create_plotly_progress_chart(df_forecast, df_actual, chart_title):
             if not negative_gaps.isna().all():
                 fig.add_trace(
                     go.Bar(
-                        x=actual_dates,
-                        y=negative_gaps,
+                        x=negative_gaps.index,
+                        y=negative_gaps.values,
                         name="Behind Target",
                         text=[f"{int(gap):,d}" if not pd.isna(gap) else "" for gap in negative_gaps],
                         textposition="outside",
                         marker=dict(
                             color=colors['behind'],
                             opacity=0.7,
-                            line=dict(
-                                color='rgba(0,0,0,0.1)',
-                                width=1
-                            )
+                            line=dict(color='rgba(0,0,0,0.1)', width=1)
                         ),
                         hovertemplate=(
                             "<b>Implementation Gap</b><br>" +
@@ -297,7 +310,7 @@ def create_plotly_progress_chart(df_forecast, df_actual, chart_title):
                             "Gap: %{y:+,.0f} sites<br>" +
                             "<extra></extra>"
                         ),
-                        yaxis='y2'  # Use secondary y-axis for gaps
+                        yaxis='y2'
                     )
                 )
 
@@ -305,11 +318,7 @@ def create_plotly_progress_chart(df_forecast, df_actual, chart_title):
         fig.update_layout(
             title=dict(
                 text=chart_title,
-                font=dict(
-                    size=24,
-                    color=colors['text'],
-                    family="Arial"
-                ),
+                font=dict(size=24, color=colors['text'], family="Arial"),
                 x=0.5,
                 xanchor="center",
                 y=0.95,
@@ -330,19 +339,15 @@ def create_plotly_progress_chart(df_forecast, df_actual, chart_title):
                 bgcolor="rgba(255, 255, 255, 0.95)",
                 bordercolor=colors['grid'],
                 borderwidth=1,
-                font=dict(
-                    size=12,
-                    color=colors['text']
-                )
+                font=dict(size=12, color=colors['text'])
             ),
-            # Increase height and adjust margins
-            height=800,  # Increased height
+            height=800,
             margin=dict(
-                t=100,   # top margin
-                b=150,   # increased bottom margin for x-axis labels
-                r=100,   # increased right margin for secondary y-axis
-                l=50,    # left margin
-                pad=10   # padding
+                t=100,
+                b=150,
+                r=100,
+                l=50,
+                pad=10
             ),
             xaxis=dict(
                 showgrid=True,
@@ -350,10 +355,7 @@ def create_plotly_progress_chart(df_forecast, df_actual, chart_title):
                 gridwidth=1,
                 tickformat="%d %b %Y",
                 tickangle=45,
-                tickfont=dict(
-                    size=12,
-                    color=colors['text']
-                ),
+                tickfont=dict(size=12, color=colors['text']),
                 title=None,
                 zeroline=False,
                 range=[start_date, end_date]
@@ -361,32 +363,22 @@ def create_plotly_progress_chart(df_forecast, df_actual, chart_title):
             yaxis=dict(
                 title=dict(
                     text="Number of Sites",
-                    font=dict(
-                        size=14,
-                        color=colors['text']
-                    )
+                    font=dict(size=14, color=colors['text'])
                 ),
                 showgrid=True,
                 gridcolor=colors['grid'],
                 gridwidth=1,
-                tickfont=dict(
-                    size=12,
-                    color=colors['text']
-                ),
+                tickfont=dict(size=12, color=colors['text']),
                 zeroline=True,
                 zerolinecolor=colors['grid'],
                 zerolinewidth=2,
                 tickformat=",d",
                 rangemode="nonnegative"
             ),
-            # Add secondary y-axis for gaps
             yaxis2=dict(
                 title=dict(
                     text="Gap (Sites)",
-                    font=dict(
-                        size=14,
-                        color=colors['text']
-                    )
+                    font=dict(size=14, color=colors['text'])
                 ),
                 overlaying='y',
                 side='right',
@@ -395,16 +387,11 @@ def create_plotly_progress_chart(df_forecast, df_actual, chart_title):
                 zerolinecolor=colors['grid'],
                 zerolinewidth=2,
                 tickformat=",d",
-                tickfont=dict(
-                    size=12,
-                    color=colors['text']
-                )
+                tickfont=dict(size=12, color=colors['text'])
             )
         )
 
-        # Remove the rangeslider to fix the extra axis issue
         fig.update_layout(xaxis_rangeslider_visible=False)
-
         return fig
     except Exception as e:
         st.error(f"Error creating chart: {str(e)}")
@@ -417,60 +404,116 @@ def create_weekly_progress_chart(df_forecast, df_actual, chart_title):
         start_date = df_forecast["forecast oa date"].min()
         end_date = df_forecast["forecast oa date"].max()
         
-        # Process forecast data by week - create a copy to avoid warnings
+        # Process forecast data by week
         df_forecast_copy = df_forecast.copy()
-        # Group by ISO week and year
         df_forecast_copy['year_week'] = df_forecast_copy['forecast oa date'].dt.strftime('%Y-W%V')
         df_forecast_copy['week_num'] = df_forecast_copy['forecast oa date'].dt.isocalendar().week
         df_forecast_copy['year'] = df_forecast_copy['forecast oa date'].dt.isocalendar().year
         
+        # Sort forecast data by date to ensure proper cumulative calculation
+        df_forecast_copy = df_forecast_copy.sort_values('forecast oa date')
+        
         # Create week labels with date ranges
         week_labels = {}
+        week_dates = {}  # Store actual dates for each week
         for year_week, group in df_forecast_copy.groupby('year_week'):
             week_start = group['forecast oa date'].min().normalize()
-            # Adjust to Monday if not already
             week_start = week_start - pd.Timedelta(days=week_start.weekday())
             week_end = week_start + pd.Timedelta(days=6)
             week_num = group['week_num'].iloc[0]
-            # Changed format to single line with smaller text
             week_labels[year_week] = f"WK{week_num} ({week_start.strftime('%d %b')}-{week_end.strftime('%d %b')})"
+            week_dates[year_week] = week_start
         
+        # Calculate cumulative forecast by week
         weekly_forecast = df_forecast_copy.groupby('year_week').size()
         weekly_forecast_cumsum = weekly_forecast.cumsum()
+        
+        # Initialize variables
+        weekly_actual_cumsum = pd.Series()
+        actual_indices = []
+        actual_values = []
+        actual_weeks = []
+        gaps = []
+        positive_gaps = []
+        negative_gaps = []
         
         # Process actual data by week
         if not df_actual.empty:
             df_actual_copy = df_actual.copy()
             df_actual_copy['year_week'] = df_actual_copy['oa actual'].dt.strftime('%Y-W%V')
+            df_actual_copy = df_actual_copy.sort_values('oa actual')  # Sort by actual date
             weekly_actual = df_actual_copy.groupby('year_week').size()
             weekly_actual_cumsum = weekly_actual.cumsum()
-        else:
-            weekly_actual_cumsum = pd.Series()
+            
+            # Map actual weeks to forecast week indices
+            week_to_index = {week: idx for idx, week in enumerate(weekly_forecast_cumsum.index)}
+            
+            for week in weekly_actual_cumsum.index:
+                if week in week_to_index:
+                    actual_indices.append(week_to_index[week])
+                    actual_values.append(weekly_actual_cumsum[week])
+                    actual_weeks.append(week)
+            
+            # Calculate weekly gaps
+            for week in actual_weeks:
+                week_idx = week_to_index[week]
+                # Get all weeks up to current week
+                forecast_weeks = [w for w in weekly_forecast_cumsum.index if week_dates[w] <= week_dates[week]]
+                if forecast_weeks:
+                    # Get forecast target for this week
+                    forecast_value = weekly_forecast_cumsum[forecast_weeks[-1]]
+                    # Get actual completions up to this week
+                    actual_value = weekly_actual_cumsum[week]
+                    # Calculate gap
+                    gap = actual_value - forecast_value
+                    gaps.append((week_idx, gap, week))
+            
+            # Split gaps into positive and negative
+            positive_gaps = [(idx, gap, week) for idx, gap, week in gaps if gap > 0]
+            negative_gaps = [(idx, gap, week) for idx, gap, week in gaps if gap < 0]
 
-        # Create the figure with increased size
+        # Calculate y-axis ranges for better scaling
+        y_max_main = max(
+            max(weekly_forecast_cumsum.values) if not weekly_forecast_cumsum.empty else 0,
+            max(weekly_actual_cumsum.values) if not weekly_actual_cumsum.empty else 0
+        )
+
+        # Calculate gap range
+        if gaps:
+            gap_values = [gap for _, gap, _ in gaps]
+            max_gap = max(gap_values)
+            min_gap = min(gap_values)
+            gap_abs_max = max(abs(min_gap), abs(max_gap))
+            gap_range = [-gap_abs_max * 1.2, gap_abs_max * 1.2]
+        else:
+            gap_abs_max = y_max_main * 0.2
+            gap_range = [-gap_abs_max, gap_abs_max]
+
+        # Create the figure
         fig = go.Figure()
         
         # Professional color scheme
         colors = {
-            'target': '#1f77b4',      # Professional blue
-            'actual': '#2ca02c',      # Forest green
-            'ahead': '#00CC96',       # Bright green for positive gap
-            'behind': '#EF553B',      # Bright red for negative gap
-            'grid': '#E9ECEF',        # Light gray
-            'text': '#2F2F2F',        # Dark gray
-            'background': '#FFFFFF',   # White
-            'reference': '#7f7f7f'    # Medium gray
+            'target': '#1f77b4',
+            'actual': '#2ca02c',
+            'ahead': '#00CC96',
+            'behind': '#EF553B',
+            'grid': '#E9ECEF',
+            'text': '#2F2F2F',
+            'background': '#FFFFFF'
         }
 
-        # Add forecast line with value labels
+        # Add forecast line
+        x_forecast = list(range(len(weekly_forecast_cumsum)))
         fig.add_trace(
             go.Scatter(
-                x=list(range(len(weekly_forecast_cumsum))),
+                x=x_forecast,
                 y=weekly_forecast_cumsum.values,
                 name=f"Target ({len(df_forecast):,} sites)",
-                line=dict(color=colors['target'], width=2),
+                line=dict(color=colors['target'], width=2.5),
                 mode="lines+markers+text",
-                text=weekly_forecast_cumsum.values.astype(int),
+                marker=dict(size=8),
+                text=[f"{int(val):,}" for val in weekly_forecast_cumsum.values],
                 textposition="top center",
                 textfont=dict(size=10, color=colors['target']),
                 fill='tozeroy',
@@ -480,81 +523,86 @@ def create_weekly_progress_chart(df_forecast, df_actual, chart_title):
             )
         )
         
-        if not weekly_actual_cumsum.empty:
-            # Create index mapping for actual data
-            actual_indices = [list(weekly_forecast_cumsum.index).index(w) if w in weekly_forecast_cumsum.index else None 
-                            for w in weekly_actual_cumsum.index]
-            actual_indices = [i for i in actual_indices if i is not None]
+        if not df_actual.empty:
+            # Map actual weeks to forecast week indices
+            week_to_index = {week: idx for idx, week in enumerate(weekly_forecast_cumsum.index)}
+            actual_indices = []
+            actual_values = []
+            actual_weeks = []
             
-            # Add actual line with value labels
+            for week in weekly_actual_cumsum.index:
+                if week in week_to_index:
+                    actual_indices.append(week_to_index[week])
+                    actual_values.append(weekly_actual_cumsum[week])
+                    actual_weeks.append(week)
+            
+            # Add actual line
             fig.add_trace(
                 go.Scatter(
                     x=actual_indices,
-                    y=weekly_actual_cumsum.values,
+                    y=actual_values,
                     name=f"Completed ({len(df_actual):,} sites)",
-                    line=dict(color=colors['actual'], width=2),
+                    line=dict(color=colors['actual'], width=2.5),
                     mode="lines+markers+text",
-                    text=weekly_actual_cumsum.values.astype(int),
+                    marker=dict(size=8),
+                    text=[f"{int(val):,}" for val in actual_values],
                     textposition="bottom center",
                     textfont=dict(size=10, color=colors['actual']),
                     fill='tozeroy',
                     fillcolor=f"rgba(44, 160, 44, 0.1)",
                     hovertemplate="%{customdata}<br>Completed: %{y:,.0f} sites<extra></extra>",
-                    customdata=[week_labels[w] for w in weekly_actual_cumsum.index]
+                    customdata=[week_labels[w] for w in actual_weeks]
                 )
             )
 
-            # Calculate gaps
-            forecast_values = weekly_forecast_cumsum.reindex(weekly_actual_cumsum.index).fillna(method='ffill')
-            gaps = weekly_actual_cumsum - forecast_values
-
-            # Split gaps into positive and negative
-            positive_gaps = gaps.copy()
-            negative_gaps = gaps.copy()
-            positive_gaps[positive_gaps <= 0] = None
-            negative_gaps[negative_gaps > 0] = None
-            
-            # Add positive gap bars
-            if not positive_gaps.isna().all():
+            # Add gap bars with improved text display
+            if positive_gaps:
+                x_vals, y_vals, weeks = zip(*positive_gaps)
                 fig.add_trace(
                     go.Bar(
-                        x=actual_indices,
-                        y=positive_gaps.values,
+                        x=list(x_vals),
+                        y=list(y_vals),
                         name="Ahead of Target",
-                        text=[f"+{int(gap):,d}" if not pd.isna(gap) else "" for gap in positive_gaps],
+                        text=[f"+{int(gap):,}" for gap in y_vals],
                         textposition="outside",
+                        textfont=dict(size=11, color=colors['ahead']),
                         marker=dict(
                             color=colors['ahead'],
                             opacity=0.7,
                             line=dict(color='rgba(0,0,0,0.1)', width=1)
                         ),
-                        hovertemplate="%{customdata}<br>Gap: %{y:+,.0f} sites<extra></extra>",
-                        customdata=[week_labels[w] for w in positive_gaps.index],
-                        yaxis='y2'
+                        hovertemplate="%{customdata}<br>Ahead by: %{y:+,.0f} sites<extra></extra>",
+                        customdata=[week_labels[w] for w in weeks],
+                        yaxis='y2',
+                        width=0.5,
+                        showlegend=True
                     )
                 )
             
-            # Add negative gap bars
-            if not negative_gaps.isna().all():
+            if negative_gaps:
+                x_vals, y_vals, weeks = zip(*negative_gaps)
                 fig.add_trace(
                     go.Bar(
-                        x=actual_indices,
-                        y=negative_gaps.values,
+                        x=list(x_vals),
+                        y=list(y_vals),
                         name="Behind Target",
-                        text=[f"{int(gap):,d}" if not pd.isna(gap) else "" for gap in negative_gaps],
+                        text=[f"{int(gap):,}" for gap in y_vals],
                         textposition="outside",
+                        textfont=dict(size=11, color=colors['behind']),
                         marker=dict(
                             color=colors['behind'],
                             opacity=0.7,
                             line=dict(color='rgba(0,0,0,0.1)', width=1)
                         ),
-                        hovertemplate="%{customdata}<br>Gap: %{y:+,.0f} sites<extra></extra>",
-                        customdata=[week_labels[w] for w in negative_gaps.index],
-                        yaxis='y2'
+                        hovertemplate="%{customdata}<br>Behind by: %{y:,.0f} sites<extra></extra>",
+                        customdata=[week_labels[w] for w in weeks],
+                        yaxis='y2',
+                        width=0.5,
+                        showlegend=True
                     )
                 )
-    
-        # Update layout with rotated labels
+        
+        # Update layout for better spacing and readability
         fig.update_layout(
             title=dict(
                 text=chart_title,
@@ -574,53 +622,63 @@ def create_weekly_progress_chart(df_forecast, df_actual, chart_title):
                 yanchor="bottom",
                 y=1.02,
                 xanchor="right",
-                x=1
+                x=1,
+                bgcolor="rgba(255,255,255,0.9)",
+                bordercolor=colors['grid']
             ),
             height=800,
             margin=dict(
-                t=100,   # top margin
-                b=120,   # bottom margin for rotated labels
-                r=100,   # right margin for secondary y-axis
-                l=50,    # left margin
-                pad=10   # padding
+                t=100,
+                b=150,
+                r=120,
+                l=80,
+                pad=10
             ),
             xaxis=dict(
                 showgrid=True,
                 gridcolor=colors['grid'],
                 ticktext=[week_labels[w] for w in weekly_forecast_cumsum.index],
                 tickvals=list(range(len(weekly_forecast_cumsum))),
-                tickangle=45,  # Rotate labels 45 degrees
-                tickfont=dict(size=11),  # Slightly smaller font
+                tickangle=45,
+                tickfont=dict(size=10),
                 title="Project Timeline by Week",
                 type='category',
                 tickmode='array',
-                nticks=len(weekly_forecast_cumsum)  # Show all ticks
+                nticks=20
             ),
             yaxis=dict(
-                title="Number of Sites",
+                title=dict(
+                    text="Number of Sites",
+                    font=dict(size=12)
+                ),
                 showgrid=True,
                 gridcolor=colors['grid'],
-                tickfont=dict(size=12),
+                tickfont=dict(size=11),
                 tickformat=",d",
-                rangemode="nonnegative"
+                rangemode="nonnegative",
+                range=[0, y_max_main * 1.1],
+                side='left'
             ),
             yaxis2=dict(
                 title=dict(
                     text="Gap (Sites)",
-                    font=dict(size=14, color=colors['text'])
+                    font=dict(size=12)
                 ),
                 overlaying='y',
                 side='right',
                 showgrid=False,
                 zeroline=True,
                 zerolinecolor=colors['grid'],
-                zerolinewidth=2,
+                zerolinewidth=1,
                 tickformat=",d",
-                tickfont=dict(size=12, color=colors['text'])
-            )
+                tickfont=dict(size=11),
+                range=gap_range,
+                dtick=max(1, int(gap_abs_max/4))
+            ),
+            bargap=0.4
         )
         
-        # Add vertical grid lines at week boundaries
+        # Update x-axis grid
         fig.update_xaxes(
             showgrid=True,
             gridwidth=1,
@@ -634,34 +692,30 @@ def create_weekly_progress_chart(df_forecast, df_actual, chart_title):
         return None
 
 def create_project_summary(df_forecast, df_actual):
-    """Create a project summary section"""
+    """Create a project summary section with unique insights"""
     if df_actual.empty:
         return "No implementation data available"
 
     # Calculate key metrics
     total_sites = len(df_forecast)
     completed_sites = len(df_actual)
-    completion_rate = (completed_sites / total_sites * 100) if total_sites > 0 else 0
     
-    start_date = df_forecast["forecast oa date"].min()
-    end_date = df_forecast["forecast oa date"].max()
+    # Calculate weekly trends - Create explicit copy to avoid SettingWithCopyWarning
+    df_actual_copy = df_actual.copy()
+    df_actual_copy.loc[:, 'week'] = df_actual_copy["oa actual"].dt.isocalendar().week
+    df_actual_copy.loc[:, 'year'] = df_actual_copy["oa actual"].dt.isocalendar().year
+    weekly_completions = df_actual_copy.groupby(['year', 'week']).size()
+    avg_weekly_rate = int(round(weekly_completions.mean()))
+    max_weekly_rate = int(weekly_completions.max())
+    min_weekly_rate = int(weekly_completions.min())
+    
+    # Calculate current week's progress
     current_date = datetime.now()
-    
-    elapsed_days = (current_date - start_date).days
-    remaining_days = (end_date - current_date).days
-    total_duration = (end_date - start_date).days
-    
-    # Calculate daily expected vs actual
-    expected_sites = len(df_forecast[df_forecast["forecast oa date"] <= current_date])
-    expected_completion = (expected_sites / total_sites * 100) if total_sites > 0 else 0
-    daily_difference = completion_rate - expected_completion
-    
-    # Calculate weekly expected vs actual
     current_week_start = current_date - pd.Timedelta(days=current_date.weekday())
     current_week_end = current_week_start + pd.Timedelta(days=7)
     last_week_start = current_week_start - pd.Timedelta(weeks=1)
     
-    # Get weekly forecast and actual counts for last complete week
+    # Get weekly forecast and actual counts
     last_week_forecast = len(df_forecast[
         (df_forecast["forecast oa date"] >= last_week_start) & 
         (df_forecast["forecast oa date"] < current_week_start)
@@ -671,7 +725,6 @@ def create_project_summary(df_forecast, df_actual):
         (df_actual["oa actual"] < current_week_start)
     ])
     
-    # Get current week's progress
     current_week_forecast = len(df_forecast[
         (df_forecast["forecast oa date"] >= current_week_start) & 
         (df_forecast["forecast oa date"] <= current_date)
@@ -685,84 +738,73 @@ def create_project_summary(df_forecast, df_actual):
     last_week_performance = (last_week_actual / last_week_forecast * 100) if last_week_forecast > 0 else 100
     current_week_performance = (current_week_actual / current_week_forecast * 100) if current_week_forecast > 0 else 100
     
-    # Calculate rates without decimal points
-    current_rate = int(round(completed_sites / max(elapsed_days, 1)))
-    required_rate = int(round((total_sites - completed_sites) / max(remaining_days, 1)))
-    
-    last_completion = df_actual["oa actual"].max()
-    days_since_last = (current_date - last_completion).days
-    sites_on_last_day = len(df_actual[df_actual["oa actual"].dt.date == last_completion.date()])
-    
-    # Calculate weekly trends without decimal points
-    weekly_completions = df_actual.groupby(df_actual["oa actual"].dt.isocalendar().week).size()
-    avg_weekly_rate = int(round(weekly_completions.mean()))
-    
     # Format week dates for display
     last_week_dates = f"{last_week_start.strftime('%d %b')} - {(current_week_start - pd.Timedelta(days=1)).strftime('%d %b')}"
     current_week_dates = f"{current_week_start.strftime('%d %b')} - {current_date.strftime('%d %b')}"
-    
-    # Determine status considering both daily and weekly progress
-    if daily_difference >= 10 or (daily_difference >= -5 and (last_week_performance >= 100 or current_week_performance >= 100)):
-        status = "AHEAD OF SCHEDULE"
-        status_color = "#28A745"
-        status_detail = (
-            f"Daily: {daily_difference:+.1f}% vs forecast | "
-            f"Last Week ({last_week_dates}): {last_week_performance:.1f}% | "
-            f"This Week ({current_week_dates}): {current_week_performance:.1f}%"
-        )
-    elif daily_difference >= -10 or last_week_performance >= 90 or current_week_performance >= 90:
-        status = "ON TRACK"
-        status_color = "#2E5077"
-        status_detail = (
-            f"Daily: {daily_difference:+.1f}% vs forecast | "
-            f"Last Week ({last_week_dates}): {last_week_performance:.1f}% | "
-            f"This Week ({current_week_dates}): {current_week_performance:.1f}%"
-        )
-    else:
-        status = "BEHIND SCHEDULE"
-        status_color = "#DC3545"
-        status_detail = (
-            f"Daily: {daily_difference:.1f}% vs forecast | "
-            f"Last Week ({last_week_dates}): {last_week_performance:.1f}% | "
-            f"This Week ({current_week_dates}): {current_week_performance:.1f}%"
-        )
 
     summary_html = f"""
     <div class="summary-section">
-        <div class="summary-header">📊 Project Implementation Summary</div>
+        <div class="summary-header">📊 Weekly Performance Insights</div>
         <div class="summary-content">
             <div class="summary-item">
-                <div class="summary-item-header">Overall Status</div>
-                <div style="color: {status_color}; font-size: 1.2rem; font-weight: 600;">{status}</div>
-                <div style="color: {status_color}; font-size: 0.9rem;">{status_detail}</div>
-                <div>Overall Completion: {completion_rate:.1f}% ({completed_sites:,} sites)</div>
-                <div>Expected to Date: {expected_completion:.1f}% ({expected_sites:,} sites)</div>
-                <div>Last Week ({last_week_dates}): {last_week_actual:,} of {last_week_forecast:,} sites ({last_week_performance:.1f}%)</div>
-                <div>This Week ({current_week_dates}): {current_week_actual:,} of {current_week_forecast:,} sites ({current_week_performance:.1f}%)</div>
-                <div>Total Plan: {total_sites:,} sites</div>
+                <div class="summary-item-header">Weekly Implementation Trends</div>
+                <div>Average Weekly: {avg_weekly_rate:,} sites</div>
+                <div>Best Week: {max_weekly_rate:,} sites</div>
+                <div>Slowest Week: {min_weekly_rate:,} sites</div>
             </div>
             <div class="summary-item">
-                <div class="summary-item-header">Timeline</div>
-                <div>Start: {start_date.strftime('%d %b %Y')}</div>
-                <div>Target End: {end_date.strftime('%d %b %Y')}</div>
-                <div>Days Remaining: {remaining_days:,}</div>
+                <div class="summary-item-header">Last Week Performance</div>
+                <div>Period: {last_week_dates}</div>
+                <div>Completed: {last_week_actual:,} of {last_week_forecast:,} sites</div>
+                <div style="color: {'#28A745' if last_week_performance >= 100 else '#DC3545'}">
+                    Achievement: {last_week_performance:.1f}%
+                </div>
             </div>
             <div class="summary-item">
-                <div class="summary-item-header">Implementation Rates</div>
-                <div>Current: {current_rate:,} sites/day</div>
-                <div>Required: {required_rate:,} sites/day</div>
-                <div>Weekly Average: {avg_weekly_rate:,} sites</div>
-            </div>
-            <div class="summary-item">
-                <div class="summary-item-header">Recent Activity</div>
-                <div>Last Implementation: {last_completion.strftime('%d %b %Y')}</div>
-                <div>Days Since Last: {days_since_last}</div>
-                <div>Sites on Last Day: {sites_on_last_day:,}</div>
+                <div class="summary-item-header">Current Week Progress</div>
+                <div>Period: {current_week_dates}</div>
+                <div>Completed: {current_week_actual:,} of {current_week_forecast:,} sites</div>
+                <div style="color: {'#28A745' if current_week_performance >= 100 else '#DC3545'}">
+                    Progress: {current_week_performance:.1f}%
+                </div>
             </div>
         </div>
     </div>
     """
     return summary_html
+
+def create_province_summary(df_actual):
+    """Create a summary of completed sites by province"""
+    if df_actual.empty or 'province' not in df_actual.columns:
+        return ""
+
+    province_counts = df_actual['province'].value_counts()
+    
+    province_html = """
+    <div class="summary-section" style="margin-top: 1rem;">
+        <div class="summary-header">📍 Completed Sites by Province</div>
+        <div class="summary-content" style="display: block;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <th style="text-align: left; padding: 8px; border-bottom: 2px solid #eee;">Province</th>
+                    <th style="text-align: right; padding: 8px; border-bottom: 2px solid #eee;">Completed Sites</th>
+                </tr>
+    """
+    
+    for province, count in province_counts.items():
+        province_html += f"""
+                <tr>
+                    <td style="text-align: left; padding: 8px; border-bottom: 1px solid #eee;">{province}</td>
+                    <td style="text-align: right; padding: 8px; border-bottom: 1px solid #eee;">{count:,}</td>
+                </tr>
+        """
+    
+    province_html += """
+            </table>
+        </div>
+    </div>
+    """
+    return province_html
 
 def load_shapefile():
     """Load Cambodia province shapefile"""
@@ -1150,6 +1192,285 @@ def plot_map(df, cambodia_provinces_gdf=None, sheet_name=None):
         st.error(f"Error in plot_map: {e}")
         return None
 
+def register_fonts():
+    """Register Calibri fonts if available, otherwise use fallback fonts"""
+    try:
+        # Windows system font paths
+        windows_font_path = "C:/Windows/Fonts/"
+        calibri_regular = os.path.join(windows_font_path, "calibri.ttf")
+        calibri_bold = os.path.join(windows_font_path, "calibrib.ttf")
+        
+        # Register Calibri fonts if available
+        if os.path.exists(calibri_regular) and os.path.exists(calibri_bold):
+            pdfmetrics.registerFont(TTFont('Calibri', calibri_regular))
+            pdfmetrics.registerFont(TTFont('Calibri-Bold', calibri_bold))
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Error registering fonts: {str(e)}")
+        return False
+
+def capture_map_for_pdf(df, provinces_gdf, selected_sheet):
+    """Generate a static map visualization for the PDF report"""
+    try:
+        st.write("Debug: Starting map generation...")
+        
+        # Verify and clean coordinates
+        df = df.copy()
+        df['lat'] = pd.to_numeric(df['lat'], errors='coerce')
+        df['lon'] = pd.to_numeric(df['lon'], errors='coerce')
+        
+        # Drop rows with invalid coordinates
+        valid_coords = df.dropna(subset=['lat', 'lon'])
+        if len(valid_coords) == 0:
+            st.error("No valid coordinates found in the data")
+            return None
+            
+        st.write(f"Debug: Found {len(valid_coords)} sites with valid coordinates")
+        
+        # Create figure with larger size for better quality
+        fig = plt.figure(figsize=(15, 10), dpi=200)  # Increased figure size and DPI
+        ax = fig.add_subplot(111)
+        
+        try:
+            # Plot province boundaries with thicker lines
+            provinces_gdf.plot(ax=ax, color='none', edgecolor='gray', linewidth=1.0)
+            st.write("Debug: Province boundaries plotted successfully")
+        except Exception as e:
+            st.error(f"Error plotting province boundaries: {str(e)}")
+            return None
+        
+        try:
+            # Plot completed and pending sites with larger markers
+            completed_mask = valid_coords['oa actual'].notna()
+            pending_mask = ~completed_mask
+            
+            # Plot completed sites with larger markers
+            if completed_mask.any():
+                completed_sites = valid_coords[completed_mask]
+                ax.scatter(completed_sites['lon'], completed_sites['lat'], 
+                         c='green', s=100, alpha=0.7, label='Completed',  # Increased marker size
+                         edgecolor='white', linewidth=1)  # Added white edge for better visibility
+                
+            # Plot pending sites with larger markers
+            if pending_mask.any():
+                pending_sites = valid_coords[pending_mask]
+                ax.scatter(pending_sites['lon'], pending_sites['lat'], 
+                         c='red', s=100, alpha=0.7, label='Pending',  # Increased marker size
+                         edgecolor='white', linewidth=1)  # Added white edge for better visibility
+                
+            st.write("Debug: Site markers plotted successfully")
+        except Exception as e:
+            st.error(f"Error plotting site markers: {str(e)}")
+            return None
+        
+        # Set map bounds for Cambodia with some padding
+        ax.set_xlim([101.8, 108.2])  # Slightly wider longitude range
+        ax.set_ylim([9.8, 15.2])     # Slightly wider latitude range
+        
+        # Add title and legend with larger font
+        plt.title(f'Implementation Map - {selected_sheet}', pad=20, fontsize=14)
+        legend = plt.legend(loc='upper right', fontsize=12, markerscale=1.5)  # Larger legend
+        legend.get_frame().set_alpha(0.9)  # Make legend background more opaque
+        
+        # Add gridlines for better reference
+        ax.grid(True, linestyle='--', alpha=0.3)
+        
+        # Save to buffer with high quality
+        try:
+            buf = BytesIO()
+            plt.savefig(buf, format='png', bbox_inches='tight', dpi=200)  # Increased DPI
+            buf.seek(0)
+            plt.close()
+            st.write("Debug: Map saved to buffer successfully")
+            return buf
+        except Exception as e:
+            st.error(f"Error saving map to buffer: {str(e)}")
+            return None
+            
+    except Exception as e:
+        st.error(f"Error in map generation: {str(e)}")
+        import traceback
+        st.error(f"Detailed error: {traceback.format_exc()}")
+        return None
+
+def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
+    """Generate a comprehensive PDF report with all dashboard metrics"""
+    try:
+        st.write("Debug: Starting PDF generation...")
+        
+        # Create PDF document with wider margins
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=letter,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=72
+        )
+        
+        # Initialize story and styles
+        story = []
+        styles = getSampleStyleSheet()
+        
+        # Add title and date
+        title = Paragraph(f"Implementation Progress Dashboard - {selected_sheet}", styles['Title'])
+        date_str = Paragraph(f"Generated on: {datetime.now().strftime('%d %b %Y %H:%M')}", styles['Normal'])
+        story.extend([title, date_str, Spacer(1, 20)])
+        
+        # 1. Overall Progress Section
+        story.append(Paragraph("1. Overall Progress", styles['Heading1']))
+        story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
+        story.append(Spacer(1, 12))
+        
+        try:
+            # Calculate metrics
+            total_sites = len(df)
+            completed_sites = df['oa actual'].notna().sum()
+            completion_rate = round((completed_sites / total_sites * 100) if total_sites > 0 else 0)  # Rounded to whole number
+            
+            # Calculate timeline metrics
+            if not df.empty:
+                start_date = df["forecast oa date"].min()
+                end_date = df["forecast oa date"].max()
+                current_date = datetime.now()
+                elapsed_days = (current_date - start_date).days
+                remaining_days = (end_date - current_date).days
+                daily_rate = round(completed_sites / max(elapsed_days, 1))  # Rounded to whole number
+                required_rate = round((total_sites - completed_sites) / max(remaining_days, 1))  # Rounded to whole number
+            
+            # Create overall metrics table
+            progress_data = [
+                ["Metric", "Value"],
+                ["Total Sites", f"{total_sites:,}"],
+                ["Completed Sites", f"{completed_sites:,}"],
+                ["Completion Rate", f"{completion_rate}%"],
+                ["Days Elapsed", f"{elapsed_days:,}"],
+                ["Days Remaining", f"{remaining_days:,}"],
+                ["Current Daily Rate", f"{daily_rate:,} sites/day"],
+                ["Required Daily Rate", f"{required_rate:,} sites/day"]
+            ]
+            
+            progress_table = Table(progress_data, colWidths=[200, 200])
+            progress_table.setStyle(TableStyle([
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2E5077')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            
+            story.append(progress_table)
+            story.append(Spacer(1, 20))
+            
+            # Add Province Summary if available
+            if 'province' in df.columns:
+                story.append(Paragraph("Completed Sites by Province", styles['Heading2']))
+                story.append(Spacer(1, 12))
+                
+                # Calculate province metrics
+                df_actual = df[df['oa actual'].notna()]
+                province_counts = df_actual['province'].value_counts().sort_index()
+                
+                # Create province summary table
+                province_data = [["Province", "Completed Sites", "Percentage"]]
+                for province, count in province_counts.items():
+                    percentage = round((count / completed_sites * 100))  # Rounded to whole number
+                    province_data.append([
+                        province,
+                        f"{count:,}",
+                        f"{percentage}%"
+                    ])
+                
+                province_table = Table(province_data, colWidths=[200, 100, 100])
+                province_table.setStyle(TableStyle([
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+                    ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2E5077')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ]))
+                
+                story.append(province_table)
+                story.append(Spacer(1, 20))
+        except Exception as e:
+            st.error(f"Error adding progress metrics: {str(e)}")
+        
+        # 2. Progress Charts Section
+        story.append(Paragraph("2. Progress Charts", styles['Heading1']))
+        story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
+        story.append(Spacer(1, 12))
+        
+        try:
+            # Create and add daily progress chart with larger size
+            daily_fig = create_plotly_progress_chart(df, df[df['oa actual'].notna()], "Daily Implementation Progress")
+            if daily_fig:
+                img_buffer = BytesIO()
+                daily_fig.write_image(img_buffer, format='png', width=1200, height=600, scale=2)  # Increased size
+                img_buffer.seek(0)
+                story.append(Image(img_buffer, width=500, height=300))  # Larger size in PDF
+                story.append(Spacer(1, 20))
+                st.write("Debug: Daily chart added successfully")
+            
+            # Create and add weekly progress chart with larger size
+            weekly_fig = create_weekly_progress_chart(df, df[df['oa actual'].notna()], "Weekly Implementation Progress")
+            if weekly_fig:
+                img_buffer = BytesIO()
+                weekly_fig.write_image(img_buffer, format='png', width=1200, height=600, scale=2)  # Increased size
+                img_buffer.seek(0)
+                story.append(Image(img_buffer, width=500, height=300))  # Larger size in PDF
+                story.append(Spacer(1, 20))
+                st.write("Debug: Weekly chart added successfully")
+        except Exception as e:
+            st.error(f"Error adding progress charts: {str(e)}")
+            story.append(Paragraph("Error: Could not generate progress charts", styles['Normal']))
+        
+        # 3. Implementation Map Section
+        story.append(Paragraph("3. Implementation Map", styles['Heading1']))
+        story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
+        story.append(Spacer(1, 12))
+        
+        try:
+            st.write("Debug: Generating map for PDF...")
+            map_buffer = capture_map_for_pdf(df, provinces_gdf, selected_sheet)
+            
+            if map_buffer:
+                map_img = Image(map_buffer, width=500, height=400)  # Increased height for better visibility
+                story.append(map_img)
+                story.append(Spacer(1, 20))
+                st.write("Debug: Map added successfully")
+            else:
+                story.append(Paragraph("Error: Could not generate map", styles['Normal']))
+                st.error("Failed to generate map for PDF")
+        except Exception as e:
+            st.error(f"Error adding map to PDF: {str(e)}")
+            story.append(Paragraph("Error: Could not add map to report", styles['Normal']))
+        
+        # Build PDF
+        try:
+            st.write("Debug: Building final PDF...")
+            doc.build(story)
+            buffer.seek(0)
+            st.write("Debug: PDF generation completed successfully")
+            return buffer
+        except Exception as e:
+            st.error(f"Error building PDF: {str(e)}")
+            import traceback
+            st.error(f"Detailed error: {traceback.format_exc()}")
+            return None
+            
+    except Exception as e:
+        st.error(f"Error in PDF generation: {str(e)}")
+        import traceback
+        st.error(f"Detailed error: {traceback.format_exc()}")
+        return None
+
 def main():
     """Main dashboard function"""
     st.title("📊 Implementation Progress Dashboard")
@@ -1213,6 +1534,24 @@ def main():
             st.metric("Total Sites", f"{total_sites:,}")
             st.metric("Completed Sites", f"{completed_sites:,}", f"{completion_rate:.1f}%")
             st.markdown("</div>", unsafe_allow_html=True)
+            
+            # Add province summary if available
+            if 'province' in df_actual.columns:
+                st.markdown("""
+                    <div class="status-card" style="margin-top: 1rem;">
+                        <h3>📍 Completed Sites by Province</h3>
+                        <hr>
+                """, unsafe_allow_html=True)
+                
+                province_counts = df_actual['province'].value_counts()
+                for province, count in province_counts.items():
+                    st.metric(
+                        province,
+                        f"{count:,} sites",
+                        help=f"Number of completed sites in {province}"
+                    )
+                
+                st.markdown("</div>", unsafe_allow_html=True)
         
         with col2:
             st.markdown("""
@@ -1270,7 +1609,7 @@ def main():
         if df is not None and not df_actual.empty:
             summary_html = create_project_summary(df_forecast, df_actual)
             st.markdown(summary_html, unsafe_allow_html=True)
-        
+
         # Create and display charts in a container
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
         
@@ -1339,12 +1678,12 @@ def main():
                                         clusters = df['cluster_id'].nunique()
                                         avg_sites_per_cluster = total_sites / clusters if clusters > 0 else 0
                                         st.metric("Total Clusters", f"{clusters:,}")
-                                        st.metric("Avg Sites per Cluster", f"{avg_sites_per_cluster:.1f}")
+                                        st.metric("Avg Sites per Cluster", f"{int(round(avg_sites_per_cluster)):,}")
                                         
                                         batches = df['swap_batch'].nunique()
                                         avg_sites_per_batch = total_sites / batches if batches > 0 else 0
                                         st.metric("Swap Batches", f"{batches:,}")
-                                        st.metric("Avg Sites per Batch", f"{avg_sites_per_batch:.1f}")
+                                        st.metric("Avg Sites per Batch", f"{int(round(avg_sites_per_batch)):,}")
                                     else:
                                         st.metric("Project Type", "Upgrade/Redeploy/Newsite")
                                         st.metric("Visualization", "Simple markers without clustering")
@@ -1356,6 +1695,44 @@ def main():
                 st.info("Map view is not available for this project sheet.")
         
         st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Add Report Generation Section in sidebar
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("📑 Report Generation")
+        
+        if st.sidebar.button("Generate PDF Report"):  # Updated button label
+            with st.spinner("Generating report..."):
+                st.write("Starting PDF generation process...")
+                
+                # Check if data is available
+                if df_forecast is None or df_actual is None:
+                    st.error("No data available for report generation")
+                    return
+                
+                # Generate PDF with charts
+                pdf_output = generate_simple_pdf_report(
+                    df,
+                    load_shapefile(),
+                    selected_sheet
+                )
+                
+                if pdf_output:
+                    try:
+                        # Get the PDF data
+                        pdf_data = pdf_output.getvalue()
+                        
+                        # Create download button
+                        st.sidebar.download_button(
+                            label="📥 Download PDF Report",
+                            data=pdf_data,
+                            file_name=f"implementation_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                            mime="application/pdf"
+                        )
+                        st.sidebar.success("Report generated successfully!")
+                    except Exception as e:
+                        st.error(f"Error creating download button: {str(e)}")
+                else:
+                    st.sidebar.error("Failed to generate PDF report. Please check the error messages above.")
         
         # Auto-refresh logic
         if auto_refresh:
