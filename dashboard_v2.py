@@ -1294,6 +1294,57 @@ def capture_map_for_pdf(df, provinces_gdf, selected_sheet):
         st.error(f"Detailed error: {traceback.format_exc()}")
         return None
 
+def convert_plotly_to_image(fig):
+    """Convert Plotly figure to image using a more cloud-friendly approach"""
+    try:
+        # First try kaleido
+        try:
+            import kaleido
+            img_bytes = fig.to_image(format="png", width=1200, height=600, scale=2)
+            return BytesIO(img_bytes)
+        except Exception as e:
+            st.write(f"Debug: Kaleido conversion failed, trying alternative method: {str(e)}")
+            
+        # If kaleido fails, try alternative method using static HTML
+        import selenium
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        import time
+        
+        # Configure headless Chrome
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        
+        # Create a temporary HTML file with the plot
+        html_str = fig.to_html(include_plotlyjs=True, full_html=True)
+        
+        # Save to a temporary file
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
+            f.write(html_str)
+            temp_path = f.name
+        
+        # Use selenium to render and capture the plot
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.get(f"file://{temp_path}")
+        time.sleep(2)  # Wait for plot to render
+        
+        # Capture screenshot
+        img_data = driver.get_screenshot_as_png()
+        driver.quit()
+        
+        # Clean up
+        import os
+        os.unlink(temp_path)
+        
+        return BytesIO(img_data)
+        
+    except Exception as e:
+        st.error(f"Error converting chart to image: {str(e)}")
+        return None
+
 def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
     """Generate a comprehensive PDF report with all dashboard metrics"""
     try:
@@ -1314,13 +1365,43 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
         story = []
         styles = getSampleStyleSheet()
         
-        # Add title and date
-        title = Paragraph(f"Implementation Progress Dashboard - {selected_sheet}", styles['Title'])
-        date_str = Paragraph(f"Generated on: {datetime.now().strftime('%d %b %Y %H:%M')}", styles['Normal'])
+        # Create custom styles with standard fonts
+        styles.add(ParagraphStyle(
+            name='CustomTitle',
+            parent=styles['Title'],
+            fontName='Helvetica-Bold',
+            fontSize=24,
+            spaceAfter=30,
+            alignment=1  # Center alignment
+        ))
+        
+        styles.add(ParagraphStyle(
+            name='CustomHeading1',
+            parent=styles['Heading1'],
+            fontName='Helvetica-Bold',
+            fontSize=16,
+            spaceAfter=12,
+            textColor=colors.HexColor('#2E5077')
+        ))
+        
+        styles.add(ParagraphStyle(
+            name='CustomNormal',
+            parent=styles['Normal'],
+            fontName='Helvetica',
+            fontSize=11,
+            spaceAfter=12
+        ))
+        
+        # Add title and date with custom styles
+        title = Paragraph(f"Implementation Progress Dashboard - {selected_sheet}", styles['CustomTitle'])
+        date_str = Paragraph(f"Generated on: {datetime.now().strftime('%d %b %Y %H:%M')}", styles['CustomNormal'])
         story.extend([title, date_str, Spacer(1, 20)])
         
+        # Section counter
+        section_num = 1
+        
         # 1. Overall Progress Section
-        story.append(Paragraph("1. Overall Progress", styles['Heading1']))
+        story.append(Paragraph(f"{section_num}. Overall Progress", styles['CustomHeading1']))
         story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
         story.append(Spacer(1, 12))
         
@@ -1328,7 +1409,7 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
             # Calculate metrics
             total_sites = len(df)
             completed_sites = df['oa actual'].notna().sum()
-            completion_rate = round((completed_sites / total_sites * 100) if total_sites > 0 else 0)  # Rounded to whole number
+            completion_rate = round((completed_sites / total_sites * 100) if total_sites > 0 else 0)
             
             # Calculate timeline metrics
             if not df.empty:
@@ -1337,10 +1418,10 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
                 current_date = datetime.now()
                 elapsed_days = (current_date - start_date).days
                 remaining_days = (end_date - current_date).days
-                daily_rate = round(completed_sites / max(elapsed_days, 1))  # Rounded to whole number
-                required_rate = round((total_sites - completed_sites) / max(remaining_days, 1))  # Rounded to whole number
+                daily_rate = round(completed_sites / max(elapsed_days, 1))
+                required_rate = round((total_sites - completed_sites) / max(remaining_days, 1))
             
-            # Create overall metrics table
+            # Create overall metrics table with standard font
             progress_data = [
                 ["Metric", "Value"],
                 ["Total Sites", f"{total_sites:,}"],
@@ -1356,11 +1437,12 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
             progress_table.setStyle(TableStyle([
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                 ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('FONTSIZE', (0, 0), (-1, -1), 11),
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2E5077')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
                 ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),  # Bold font for header
             ]))
             
             story.append(progress_table)
@@ -1368,33 +1450,39 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
             
             # Add Province Summary if available
             if 'province' in df.columns:
-                story.append(Paragraph("Completed Sites by Province", styles['Heading2']))
+                section_num += 1
+                story.append(Paragraph(f"{section_num}. Completed Sites by Province", styles['CustomHeading1']))
+                story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
                 story.append(Spacer(1, 12))
                 
                 # Calculate province metrics
                 df_actual = df[df['oa actual'].notna()]
                 province_counts = df_actual['province'].value_counts().sort_index()
                 
-                # Create province summary table
-                province_data = [["Province", "Completed Sites", "Percentage"]]
-                for province, count in province_counts.items():
-                    percentage = round((count / completed_sites * 100))  # Rounded to whole number
+                # Create province summary table with standard font
+                province_data = [["No.", "Province", "Completed Sites", "Percentage"]]
+                for idx, (province, count) in enumerate(province_counts.items(), 1):
+                    percentage = round((count / completed_sites * 100))
                     province_data.append([
+                        str(idx),
                         province,
                         f"{count:,}",
                         f"{percentage}%"
                     ])
                 
-                province_table = Table(province_data, colWidths=[200, 100, 100])
+                province_table = Table(province_data, colWidths=[40, 160, 100, 100])
                 province_table.setStyle(TableStyle([
-                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                    ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+                    ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+                    ('ALIGN', (1, 0), (1, -1), 'LEFT'),
+                    ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
                     ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('FONTSIZE', (0, 0), (-1, -1), 11),
                     ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2E5077')),
                     ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                     ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
                     ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('LINEBELOW', (0, 0), (-1, 0), 2, colors.HexColor('#2E5077')),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),  # Bold font for header
                 ]))
                 
                 story.append(province_table)
@@ -1403,36 +1491,39 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
             st.error(f"Error adding progress metrics: {str(e)}")
         
         # 2. Progress Charts Section
-        story.append(Paragraph("2. Progress Charts", styles['Heading1']))
+        section_num += 1
+        story.append(Paragraph(f"{section_num}. Progress Charts", styles['CustomHeading1']))
         story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
         story.append(Spacer(1, 12))
         
         try:
-            # Create and add daily progress chart with larger size
+            # Create and add daily progress chart
             daily_fig = create_plotly_progress_chart(df, df[df['oa actual'].notna()], "Daily Implementation Progress")
             if daily_fig:
-                img_buffer = BytesIO()
-                daily_fig.write_image(img_buffer, format='png', width=1200, height=600, scale=2)  # Increased size
-                img_buffer.seek(0)
-                story.append(Image(img_buffer, width=500, height=300))  # Larger size in PDF
-                story.append(Spacer(1, 20))
-                st.write("Debug: Daily chart added successfully")
+                st.write("Debug: Converting daily chart to image...")
+                img_buffer = convert_plotly_to_image(daily_fig)
+                if img_buffer:
+                    story.append(Image(img_buffer, width=500, height=300))
+                    story.append(Spacer(1, 20))
+                    st.write("Debug: Daily chart added successfully")
             
-            # Create and add weekly progress chart with larger size
+            # Create and add weekly progress chart
             weekly_fig = create_weekly_progress_chart(df, df[df['oa actual'].notna()], "Weekly Implementation Progress")
             if weekly_fig:
-                img_buffer = BytesIO()
-                weekly_fig.write_image(img_buffer, format='png', width=1200, height=600, scale=2)  # Increased size
-                img_buffer.seek(0)
-                story.append(Image(img_buffer, width=500, height=300))  # Larger size in PDF
-                story.append(Spacer(1, 20))
-                st.write("Debug: Weekly chart added successfully")
+                st.write("Debug: Converting weekly chart to image...")
+                img_buffer = convert_plotly_to_image(weekly_fig)
+                if img_buffer:
+                    story.append(Image(img_buffer, width=500, height=300))
+                    story.append(Spacer(1, 20))
+                    st.write("Debug: Weekly chart added successfully")
+                    
         except Exception as e:
             st.error(f"Error adding progress charts: {str(e)}")
-            story.append(Paragraph("Error: Could not generate progress charts", styles['Normal']))
+            story.append(Paragraph("Error: Could not generate progress charts", styles['CustomNormal']))
         
         # 3. Implementation Map Section
-        story.append(Paragraph("3. Implementation Map", styles['Heading1']))
+        section_num += 1
+        story.append(Paragraph(f"{section_num}. Implementation Map", styles['CustomHeading1']))
         story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
         story.append(Spacer(1, 12))
         
@@ -1446,11 +1537,11 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
                 story.append(Spacer(1, 20))
                 st.write("Debug: Map added successfully")
             else:
-                story.append(Paragraph("Error: Could not generate map", styles['Normal']))
+                story.append(Paragraph("Error: Could not generate map", styles['CustomNormal']))
                 st.error("Failed to generate map for PDF")
         except Exception as e:
             st.error(f"Error adding map to PDF: {str(e)}")
-            story.append(Paragraph("Error: Could not add map to report", styles['Normal']))
+            story.append(Paragraph("Error: Could not add map to report", styles['CustomNormal']))
         
         # Build PDF
         try:
