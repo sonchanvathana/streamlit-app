@@ -1211,7 +1211,7 @@ def register_fonts():
         return False
 
 def capture_map_for_pdf(df, provinces_gdf, selected_sheet):
-    """Generate a static map visualization for the PDF report"""
+    """Generate a static map visualization for the PDF report using plotly mapbox"""
     try:
         st.write("Debug: Starting map generation...")
         
@@ -1228,65 +1228,132 @@ def capture_map_for_pdf(df, provinces_gdf, selected_sheet):
             
         st.write(f"Debug: Found {len(valid_coords)} sites with valid coordinates")
         
-        # Create figure with larger size for better quality
-        fig = plt.figure(figsize=(15, 10), dpi=200)  # Increased figure size and DPI
-        ax = fig.add_subplot(111)
+        # Create figure with mapbox
+        fig = go.Figure()
+
+        # Add province boundaries if available
+        if provinces_gdf is not None and not provinces_gdf.empty:
+            try:
+                for idx, row in provinces_gdf.iterrows():
+                    if row.geometry:
+                        if row.geometry.type == 'MultiPolygon':
+                            for polygon in row.geometry.geoms:
+                                x, y = polygon.exterior.xy
+                                fig.add_trace(go.Scattermapbox(
+                                    lon=x,
+                                    lat=y,
+                                    mode='lines',
+                                    name=row['HRName'] if 'HRName' in row else f'Province {idx}',
+                                    line=dict(color='gray', width=1),
+                                    fill='toself',
+                                    fillcolor='rgba(128, 128, 128, 0.1)',
+                                    hoverinfo='name',
+                                    showlegend=False
+                                ))
+                        elif row.geometry.type == 'Polygon':
+                            x, y = row.geometry.exterior.xy
+                            fig.add_trace(go.Scattermapbox(
+                                lon=x,
+                                lat=y,
+                                mode='lines',
+                                name=row['HRName'] if 'HRName' in row else f'Province {idx}',
+                                line=dict(color='gray', width=1),
+                                fill='toself',
+                                fillcolor='rgba(128, 128, 128, 0.1)',
+                                hoverinfo='name',
+                                showlegend=False
+                            ))
+                st.write("Debug: Province boundaries plotted successfully")
+            except Exception as e:
+                st.error(f"Error plotting province boundaries: {str(e)}")
         
+        # Plot completed sites
+        completed_mask = valid_coords['oa actual'].notna()
+        if completed_mask.any():
+            completed_sites = valid_coords[completed_mask]
+            fig.add_trace(go.Scattermapbox(
+                lon=completed_sites['lon'],
+                lat=completed_sites['lat'],
+                mode='markers',
+                name='Completed Sites',
+                marker=dict(
+                    size=10,
+                    color='green',
+                    opacity=0.7
+                ),
+                text=completed_sites['sitename'],
+                hovertemplate="<b>%{text}</b><br>Status: Completed<br>Lon: %{lon:.4f}<br>Lat: %{lat:.4f}<extra></extra>"
+            ))
+        
+        # Plot pending sites
+        pending_mask = ~completed_mask
+        if pending_mask.any():
+            pending_sites = valid_coords[pending_mask]
+            fig.add_trace(go.Scattermapbox(
+                lon=pending_sites['lon'],
+                lat=pending_sites['lat'],
+                mode='markers',
+                name='Pending Sites',
+                marker=dict(
+                    size=10,
+                    color='red',
+                    opacity=0.7
+                ),
+                text=pending_sites['sitename'],
+                hovertemplate="<b>%{text}</b><br>Status: Pending<br>Lon: %{lon:.4f}<br>Lat: %{lat:.4f}<extra></extra>"
+            ))
+
+        # Get Mapbox token from environment variable or use empty string for basic map
+        mapbox_token = os.getenv('MAPBOX_TOKEN', '')
+        
+        # Update layout with mapbox style
+        fig.update_layout(
+            title=dict(
+                text=f'Implementation Map - {selected_sheet}',
+                x=0.5,
+                xanchor='center',
+                font=dict(size=16)
+            ),
+            showlegend=True,
+            legend=dict(
+                yanchor="top",
+                y=0.99,
+                xanchor="right",
+                x=0.99,
+                bgcolor='rgba(255,255,255,0.8)'
+            ),
+            width=1200,
+            height=800,
+            margin=dict(l=0, r=0, t=50, b=0),
+            mapbox=dict(
+                style='carto-positron',  # Use Carto style which is free and doesn't require token
+                center=dict(lat=12.5657, lon=104.9910),  # Center on Cambodia
+                zoom=6,
+                bearing=0,
+                pitch=0
+            ),
+            paper_bgcolor='white'
+        )
+        
+        # Convert to image
         try:
-            # Plot province boundaries with thicker lines
-            provinces_gdf.plot(ax=ax, color='none', edgecolor='gray', linewidth=1.0)
-            st.write("Debug: Province boundaries plotted successfully")
-        except Exception as e:
-            st.error(f"Error plotting province boundaries: {str(e)}")
-            return None
-        
-        try:
-            # Plot completed and pending sites with larger markers
-            completed_mask = valid_coords['oa actual'].notna()
-            pending_mask = ~completed_mask
-            
-            # Plot completed sites with larger markers
-            if completed_mask.any():
-                completed_sites = valid_coords[completed_mask]
-                ax.scatter(completed_sites['lon'], completed_sites['lat'], 
-                         c='green', s=100, alpha=0.7, label='Completed',  # Increased marker size
-                         edgecolor='white', linewidth=1)  # Added white edge for better visibility
-                
-            # Plot pending sites with larger markers
-            if pending_mask.any():
-                pending_sites = valid_coords[pending_mask]
-                ax.scatter(pending_sites['lon'], pending_sites['lat'], 
-                         c='red', s=100, alpha=0.7, label='Pending',  # Increased marker size
-                         edgecolor='white', linewidth=1)  # Added white edge for better visibility
-                
-            st.write("Debug: Site markers plotted successfully")
-        except Exception as e:
-            st.error(f"Error plotting site markers: {str(e)}")
-            return None
-        
-        # Set map bounds for Cambodia with some padding
-        ax.set_xlim([101.8, 108.2])  # Slightly wider longitude range
-        ax.set_ylim([9.8, 15.2])     # Slightly wider latitude range
-        
-        # Add title and legend with larger font
-        plt.title(f'Implementation Map - {selected_sheet}', pad=20, fontsize=14)
-        legend = plt.legend(loc='upper right', fontsize=12, markerscale=1.5)  # Larger legend
-        legend.get_frame().set_alpha(0.9)  # Make legend background more opaque
-        
-        # Add gridlines for better reference
-        ax.grid(True, linestyle='--', alpha=0.3)
-        
-        # Save to buffer with high quality
-        try:
-            buf = BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight', dpi=200)  # Increased DPI
-            buf.seek(0)
-            plt.close()
+            img_bytes = fig.to_image(format="png", width=1200, height=800, scale=2)
+            buf = BytesIO(img_bytes)
             st.write("Debug: Map saved to buffer successfully")
             return buf
         except Exception as e:
-            st.error(f"Error saving map to buffer: {str(e)}")
-            return None
+            st.error(f"Error converting to image: {str(e)}")
+            # Try alternative method using static HTML
+            try:
+                st.write("Debug: Attempting alternative image conversion method...")
+                import plotly.io as pio
+                img_bytes = pio.to_image(fig, format="png", width=1200, height=800, scale=2)
+                buf = BytesIO(img_bytes)
+                st.write("Debug: Alternative conversion successful")
+                return buf
+            except Exception as e2:
+                st.error(f"Error in alternative conversion: {str(e2)}")
+                return None
             
     except Exception as e:
         st.error(f"Error in map generation: {str(e)}")
