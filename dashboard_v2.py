@@ -1474,7 +1474,7 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
         
         # Add title and date with custom styles
         title = Paragraph(f"Implementation Progress Dashboard - {selected_sheet}", styles['CustomTitle'])
-        date_str = Paragraph(f"Generated on: {current_time.strftime('%d %b %Y %H:%M %Z')}", styles['CustomNormal'])
+        date_str = Paragraph(f"Generated on: {current_time.strftime('%d %b %Y %H:%M')}", styles['CustomNormal'])
         story.extend([title, date_str, Spacer(1, 20)])
         
         # 1. Executive Summary Section
@@ -1585,20 +1585,28 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
             # Sort by total sites descending
             province_data.sort(key=lambda x: x['Total'], reverse=True)
             
+            # Create a copy of province data and reverse it for the bar chart only
+            chart_data = province_data[::-1]
+            
             # Create province analysis visualization
             fig_province = go.Figure()
             
-            # Add bars for total and completed sites
-            provinces = [p['Province'] for p in province_data]
-            totals = [p['Total'] for p in province_data]
-            completed = [p['Completed'] for p in province_data]
-            
+            # Add bars for total and completed sites (use chart_data for reversed order)
+            provinces = [p['Province'] for p in chart_data]
+            totals = [p['Total'] for p in chart_data]
+            completed = [p['Completed'] for p in chart_data]
+
+            # Add the base bars first
             fig_province.add_trace(go.Bar(
                 y=provinces,
                 x=totals,
                 name='Total Sites',
                 orientation='h',
-                marker_color='rgba(169, 169, 169, 0.9)'
+                marker=dict(
+                    color='rgb(220, 220, 220)',
+                    line=dict(color='black', width=1)
+                ),
+                showlegend=True
             ))
             
             fig_province.add_trace(go.Bar(
@@ -1606,15 +1614,157 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
                 x=completed,
                 name='Completed Sites',
                 orientation='h',
-                marker_color='rgba(0, 100, 0, 0.85)'
+                marker=dict(
+                    color='rgb(0, 100, 0)',
+                    line=dict(color='black', width=1)
+                ),
+                showlegend=True
             ))
+
+            # Add text layers for total sites (outside the bars)
+            for i, (prov, tot) in enumerate(zip(provinces, totals)):
+                # Black background text
+                fig_province.add_trace(go.Scatter(
+                    x=[tot],
+                    y=[prov],
+                    mode='text',
+                    text=[f"{tot:,}"],
+                    textposition='right',
+                    textfont=dict(
+                        size=14,
+                        color='black',
+                        family='Arial Black'
+                    ),
+                    showlegend=False,
+                    hoverinfo='none'
+                ))
+                # White text slightly offset
+                fig_province.add_trace(go.Scatter(
+                    x=[tot],
+                    y=[prov],
+                    mode='text',
+                    text=[f"{tot:,}"],
+                    textposition='right',
+                    textfont=dict(
+                        size=12,
+                        color='white',
+                        family='Arial Black'
+                    ),
+                    showlegend=False,
+                    hoverinfo='none'
+                ))
+
+            # Add text layers for completed sites (inside the bars)
+            for i, (prov, comp) in enumerate(zip(provinces, completed)):
+                if comp > 0:  # Only add text for non-zero values
+                    # Black outline text
+                    fig_province.add_trace(go.Scatter(
+                        x=[comp/2],  # Center of the bar
+                        y=[prov],
+                        mode='text',
+                        text=[f"{comp:,}"],
+                        textposition='middle center',
+                        textfont=dict(
+                            size=14,
+                            color='black',
+                            family='Arial Black'
+                        ),
+                        showlegend=False,
+                        hoverinfo='none'
+                    ))
+                    # White text slightly offset
+                    fig_province.add_trace(go.Scatter(
+                        x=[comp/2],  # Center of the bar
+                        y=[prov],
+                        mode='text',
+                        text=[f"{comp:,}"],
+                        textposition='middle center',
+                        textfont=dict(
+                            size=12,
+                            color='white',
+                            family='Arial Black'
+                        ),
+                        showlegend=False,
+                        hoverinfo='none'
+                    ))
             
+            # Update layout with stronger contrast
             fig_province.update_layout(
                 barmode='overlay',
-                height=max(400, len(province_data) * 30),
+                height=max(400, len(province_data) * 35),  # Increased height for better spacing
                 margin=dict(l=150, r=150, t=40, b=40),
-                title='Provincial Implementation Status',
-                showlegend=True
+                title=dict(
+                    text='<b>Provincial Implementation Status</b>',
+                    font=dict(
+                        size=16,
+                        color='black',
+                        family='Arial Black'
+                    ),
+                    x=0.5,
+                    xanchor='center'
+                ),
+                showlegend=True,
+                bargap=0.3,  # Increased gap
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                yaxis=dict(
+                    tickfont=dict(
+                        size=12,
+                        color='black',
+                        family='Arial Black'
+                    ),
+                    gridcolor='black',
+                    ticklen=5,
+                    tickwidth=1,
+                    tickcolor='black',
+                    linecolor='black',
+                    linewidth=1,
+                    showgrid=True,
+                    gridwidth=0.5
+                ),
+                xaxis=dict(
+                    tickfont=dict(
+                        size=12,
+                        color='black',
+                        family='Arial Black'
+                    ),
+                    gridcolor='black',
+                    ticklen=5,
+                    tickwidth=1,
+                    tickcolor='black',
+                    linecolor='black',
+                    linewidth=1,
+                    showgrid=True,
+                    gridwidth=0.5
+                ),
+                legend=dict(
+                    font=dict(
+                        size=12,
+                        color='black',
+                        family='Arial Black'
+                    ),
+                    bgcolor='white',
+                    bordercolor='black',
+                    borderwidth=1,
+                    x=1,
+                    y=1.02,
+                    yanchor='bottom',
+                    xanchor='right'
+                )
+            )
+
+            # Add a white background with black border
+            fig_province.add_shape(
+                type="rect",
+                xref="paper",
+                yref="paper",
+                x0=0,
+                y0=0,
+                x1=1,
+                y1=1,
+                line=dict(color="black", width=2),
+                fillcolor="white",
+                layer="below"
             )
             
             # Convert chart to image and add to PDF
@@ -1623,19 +1773,17 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
                 story.append(Image(img_buffer, width=500, height=max(300, len(province_data) * 20)))
                 story.append(Spacer(1, 20))
             
-            # Add detailed province table
-            table_data = [["Province", "Total Sites", "Completed", "Completion Rate", "Status"]]
-            for p in province_data:
-                status = "On Track" if p['Rate'] >= (completion_rate) else "Needs Attention"
+            # Add detailed province table (use original province_data for descending order)
+            table_data = [["Province", "Total Sites", "Completed", "Completion Rate"]]
+            for p in province_data:  # Use original province_data here
                 table_data.append([
                     p['Province'],
                     f"{p['Total']:,}",
                     f"{p['Completed']:,}",
-                    f"{p['Rate']:.1f}%",
-                    status
+                    f"{p['Rate']:.1f}%"
                 ])
             
-            province_table = Table(table_data, colWidths=[120, 80, 80, 100, 100])
+            province_table = Table(table_data, colWidths=[120, 100, 100, 100])
             province_table.setStyle(TableStyle([
                 ('ALIGN', (0, 0), (0, -1), 'LEFT'),
                 ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
@@ -1682,7 +1830,10 @@ def create_province_visualizations(df):
     
     # Calculate completion rates
     province_data['Completion Rate'] = (province_data['Completed Sites'] / province_data['Total Sites'] * 100).round(1)
-    province_data = province_data.sort_values('Total Sites', ascending=True)
+    province_data = province_data.sort_values('Total Sites', ascending=False)
+    
+    # Reverse the order to show highest values at top for horizontal bar chart
+    province_data = province_data.iloc[::-1]  # Add this line to reverse the order
     
     # Create horizontal bar chart
     bar_fig = go.Figure()
