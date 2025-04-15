@@ -25,6 +25,7 @@ import tempfile
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import pytz
+import plotly.express as px
 
 # Set page configuration
 st.set_page_config(
@@ -1194,19 +1195,26 @@ def plot_map(df, cambodia_provinces_gdf=None, sheet_name=None):
         return None
 
 def register_fonts():
-    """Register Calibri fonts if available, otherwise use fallback fonts"""
+    """Register standard fonts for consistent appearance"""
     try:
         # Windows system font paths
         windows_font_path = "C:/Windows/Fonts/"
-        calibri_regular = os.path.join(windows_font_path, "calibri.ttf")
-        calibri_bold = os.path.join(windows_font_path, "calibrib.ttf")
+        standard_fonts = {
+            'Arial': 'arial.ttf',
+            'Arial-Bold': 'arialbd.ttf',
+            'Arial-Italic': 'ariali.ttf',
+            'Arial-BoldItalic': 'arialbi.ttf'
+        }
         
-        # Register Calibri fonts if available
-        if os.path.exists(calibri_regular) and os.path.exists(calibri_bold):
-            pdfmetrics.registerFont(TTFont('Calibri', calibri_regular))
-            pdfmetrics.registerFont(TTFont('Calibri-Bold', calibri_bold))
-            return True
-        return False
+        # Register fonts
+        fonts_registered = False
+        for font_name, font_file in standard_fonts.items():
+            font_path = os.path.join(windows_font_path, font_file)
+            if os.path.exists(font_path):
+                pdfmetrics.registerFont(TTFont(font_name, font_path))
+                fonts_registered = True
+        
+        return fonts_registered
     except Exception as e:
         st.error(f"Error registering fonts: {str(e)}")
         return False
@@ -1437,15 +1445,21 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
             bottomMargin=72
         )
         
+        # Register fonts
+        fonts_registered = register_fonts()
+        
         # Initialize story and styles
         story = []
         styles = getSampleStyleSheet()
         
         # Create custom styles with standard fonts
+        font_family = 'Arial' if fonts_registered else 'Helvetica'
+        font_family_bold = 'Arial-Bold' if fonts_registered else 'Helvetica-Bold'
+        
         styles.add(ParagraphStyle(
             name='CustomTitle',
             parent=styles['Title'],
-            fontName='Helvetica-Bold',
+            fontName=font_family_bold,
             fontSize=24,
             spaceAfter=30,
             alignment=1  # Center alignment
@@ -1454,16 +1468,16 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
         styles.add(ParagraphStyle(
             name='CustomHeading1',
             parent=styles['Heading1'],
-            fontName='Helvetica-Bold',
+            fontName=font_family_bold,
             fontSize=16,
             spaceAfter=12,
-            textColor=colors.HexColor('#2E5077')
+            textColor=colors.HexColor('#1a237e')  # Deep Indigo to match dashboard
         ))
         
         styles.add(ParagraphStyle(
             name='CustomNormal',
             parent=styles['Normal'],
-            fontName='Helvetica',
+            fontName=font_family,
             fontSize=11,
             spaceAfter=12
         ))
@@ -1588,7 +1602,7 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
             # Create a copy of province data and reverse it for the bar chart only
             chart_data = province_data[::-1]
             
-            # Create province analysis visualization
+            # Create province analysis visualization with improved clarity
             fig_province = go.Figure()
             
             # Add bars for total and completed sites (use chart_data for reversed order)
@@ -1596,175 +1610,170 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
             totals = [p['Total'] for p in chart_data]
             completed = [p['Completed'] for p in chart_data]
 
-            # Add the base bars first
+            # Calculate maximum value for scaling and spacing
+            max_value = max(totals)
+            
+            # Add the base bars first (total sites - light gray)
             fig_province.add_trace(go.Bar(
                 y=provinces,
                 x=totals,
                 name='Total Sites',
                 orientation='h',
                 marker=dict(
-                    color='rgb(220, 220, 220)',
-                    line=dict(color='black', width=1)
+                    color='rgb(230, 230, 230)',  # Solid light gray
+                    line=dict(color='rgb(210, 210, 210)', width=1)
                 ),
-                showlegend=True
+                showlegend=True,
+                width=0.6,  # Reduced width for cleaner look
+                hovertemplate='<b>%{y}</b><br>Total: %{x:,}<extra></extra>'
             ))
             
+            # Add completed sites bars (blue)
             fig_province.add_trace(go.Bar(
                 y=provinces,
                 x=completed,
-                name='Completed Sites',
+                name='Completed',
                 orientation='h',
                 marker=dict(
-                    color='rgb(0, 100, 0)',
-                    line=dict(color='black', width=1)
-                ),
-                showlegend=True
-            ))
-
-            # Add text layers for total sites (outside the bars)
-            for i, (prov, tot) in enumerate(zip(provinces, totals)):
-                # Black background text
-                fig_province.add_trace(go.Scatter(
-                    x=[tot],
-                    y=[prov],
-                    mode='text',
-                    text=[f"{tot:,}"],
-                    textposition='right',
-                    textfont=dict(
-                        size=14,
-                        color='black',
-                        family='Arial Black'
-                    ),
-                    showlegend=False,
-                    hoverinfo='none'
-                ))
-                # White text slightly offset
-                fig_province.add_trace(go.Scatter(
-                    x=[tot],
-                    y=[prov],
-                    mode='text',
-                    text=[f"{tot:,}"],
-                    textposition='right',
-                    textfont=dict(
-                        size=12,
-                        color='white',
-                        family='Arial Black'
-                    ),
-                    showlegend=False,
-                    hoverinfo='none'
-                ))
-
-            # Add text layers for completed sites (inside the bars)
-            for i, (prov, comp) in enumerate(zip(provinces, completed)):
-                if comp > 0:  # Only add text for non-zero values
-                    # Black outline text
-                    fig_province.add_trace(go.Scatter(
-                        x=[comp/2],  # Center of the bar
-                        y=[prov],
-                        mode='text',
-                        text=[f"{comp:,}"],
-                        textposition='middle center',
-                        textfont=dict(
-                            size=14,
-                            color='black',
-                            family='Arial Black'
-                        ),
-                        showlegend=False,
-                        hoverinfo='none'
-                    ))
-                    # White text slightly offset
-                    fig_province.add_trace(go.Scatter(
-                        x=[comp/2],  # Center of the bar
-                        y=[prov],
-                        mode='text',
-                        text=[f"{comp:,}"],
-                        textposition='middle center',
-                        textfont=dict(
-                            size=12,
-                            color='white',
-                            family='Arial Black'
-                        ),
-                        showlegend=False,
-                        hoverinfo='none'
-                    ))
-            
-            # Update layout with stronger contrast
-            fig_province.update_layout(
-                barmode='overlay',
-                height=max(400, len(province_data) * 35),  # Increased height for better spacing
-                margin=dict(l=150, r=150, t=40, b=40),
-                title=dict(
-                    text='<b>Provincial Implementation Status</b>',
-                    font=dict(
-                        size=16,
-                        color='black',
-                        family='Arial Black'
-                    ),
-                    x=0.5,
-                    xanchor='center'
+                    color='rgb(0, 123, 255)',  # Solid blue
+                    line=dict(color='rgb(0, 86, 179)', width=1)
                 ),
                 showlegend=True,
-                bargap=0.3,  # Increased gap
+                width=0.6,  # Reduced width for cleaner look
+                hovertemplate='<b>%{y}</b><br>Completed: %{x:,}<extra></extra>'
+            ))
+
+            # Add data labels with improved clarity
+            for i, (prov, tot, comp) in enumerate(zip(provinces, totals, completed)):
+                rate = (comp / tot * 100) if tot > 0 else 0
+                
+                # Add completed value in the middle of the blue bar if there are completed sites
+                if comp > 0 and comp/tot > 0.15:  # Only show label if enough space
+                    fig_province.add_trace(go.Scatter(
+                        x=[comp/2],
+                        y=[prov],
+                        mode='text',
+                        text=[f"{int(comp):,}"],
+                        textposition='middle center',
+                        textfont=dict(
+                            size=10,
+                            color='white',
+                            family='Arial'
+                        ),
+                        showlegend=False,
+                        hoverinfo='none'
+                    ))
+
+                # Add total and percentage with improved spacing
+                fig_province.add_trace(go.Scatter(
+                    x=[max_value * 1.02],
+                    y=[prov],
+                    mode='text',
+                    text=[f"{int(tot):,}"],
+                    textposition='middle left',
+                    textfont=dict(
+                        size=10,
+                        color='rgb(60, 60, 60)',
+                        family='Arial'
+                    ),
+                    showlegend=False,
+                    hoverinfo='none'
+                ))
+
+                # Add percentage with color coding
+                color = 'rgb(0, 150, 0)' if rate >= 80 else 'rgb(150, 150, 0)' if rate >= 50 else 'rgb(150, 0, 0)'
+                fig_province.add_trace(go.Scatter(
+                    x=[max_value * 1.15],
+                    y=[prov],
+                    mode='text',
+                    text=[f"{rate:.0f}%"],  # Removed decimal for cleaner look
+                    textposition='middle left',
+                    textfont=dict(
+                        size=10,
+                        color=color,
+                        family='Arial'
+                    ),
+                    showlegend=False,
+                    hoverinfo='none'
+                ))
+
+            # Update layout with minimalist design
+            fig_province.update_layout(
+                title=dict(
+                    text='Provincial Implementation Status',
+                    font=dict(
+                        size=16,
+                        color='rgb(60, 60, 60)',
+                        family='Arial'
+                    ),
+                    x=0.5,
+                    xanchor='center',
+                    y=0.98
+                ),
+                barmode='overlay',
+                height=max(350, len(province_data) * 35),  # Adjusted height
+                margin=dict(l=120, r=200, t=60, b=40),  # Adjusted margins
+                showlegend=True,
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1,
+                    bgcolor='white',
+                    bordercolor='rgb(230, 230, 230)',
+                    borderwidth=1,
+                    font=dict(
+                        size=10,
+                        color='rgb(60, 60, 60)',
+                        family='Arial'
+                    )
+                ),
                 plot_bgcolor='white',
                 paper_bgcolor='white',
-                yaxis=dict(
-                    tickfont=dict(
-                        size=12,
-                        color='black',
-                        family='Arial Black'
-                    ),
-                    gridcolor='black',
-                    ticklen=5,
-                    tickwidth=1,
-                    tickcolor='black',
-                    linecolor='black',
-                    linewidth=1,
-                    showgrid=True,
-                    gridwidth=0.5
-                ),
+                bargap=0.15,
                 xaxis=dict(
-                    tickfont=dict(
-                        size=12,
-                        color='black',
-                        family='Arial Black'
-                    ),
-                    gridcolor='black',
-                    ticklen=5,
-                    tickwidth=1,
-                    tickcolor='black',
-                    linecolor='black',
-                    linewidth=1,
                     showgrid=True,
-                    gridwidth=0.5
-                ),
-                legend=dict(
-                    font=dict(
-                        size=12,
-                        color='black',
-                        family='Arial Black'
+                    gridcolor='rgb(240, 240, 240)',
+                    gridwidth=1,
+                    zeroline=False,
+                    title=None,  # Removed axis title for minimalist look
+                    tickfont=dict(
+                        size=10,
+                        color='rgb(60, 60, 60)',
+                        family='Arial'
                     ),
-                    bgcolor='white',
-                    bordercolor='black',
-                    borderwidth=1,
-                    x=1,
-                    y=1.02,
-                    yanchor='bottom',
-                    xanchor='right'
+                    range=[0, max_value * 1.25],
+                    showspikes=False
+                ),
+                yaxis=dict(
+                    showgrid=False,
+                    title=None,  # Removed axis title for minimalist look
+                    tickfont=dict(
+                        size=10,
+                        color='rgb(60, 60, 60)',
+                        family='Arial'
+                    ),
+                    automargin=True
                 )
             )
 
-            # Add a white background with black border
-            fig_province.add_shape(
-                type="rect",
-                xref="paper",
-                yref="paper",
-                x0=0,
-                y0=0,
-                x1=1,
-                y1=1,
-                line=dict(color="black", width=2),
-                fillcolor="white",
-                layer="below"
+            # Remove border around the plot for cleaner look
+            fig_province.update_layout(
+                shapes=[]
+            )
+
+            # Update axes lines for minimal look
+            fig_province.update_xaxes(
+                showline=True,
+                linewidth=1,
+                linecolor='rgb(240, 240, 240)',
+                mirror=False
+            )
+            
+            fig_province.update_yaxes(
+                showline=False,
+                mirror=False
             )
             
             # Convert chart to image and add to PDF
@@ -1799,6 +1808,45 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
             story.append(province_table)
             story.append(Spacer(1, 20))
         
+        # 5. GAP OA Analysis Section
+        story.append(Paragraph("5. Implementation GAP Analysis", styles['CustomHeading1']))
+        story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
+        story.append(Spacer(1, 12))
+        
+        try:
+            # Generate GAP Analysis visualization
+            gap_fig, gap_summary = create_gap_oa_analysis(df)
+            if gap_fig is not None:
+                # Convert chart to image
+                img_buffer = convert_plotly_to_image(gap_fig)
+                if img_buffer:
+                    story.append(Image(img_buffer, width=500, height=300))
+                    story.append(Spacer(1, 20))
+                
+                if gap_summary is not None:
+                    # Create summary table with improved styling
+                    gap_table = Table(gap_summary, colWidths=[200, 100, 150])
+                    gap_table.setStyle(TableStyle([
+                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                        ('ALIGN', (1, 0), (2, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), font_family_bold),
+                        ('FONTSIZE', (0, 0), (-1, 0), 12),
+                        ('FONTNAME', (0, 1), (-1, -1), font_family),
+                        ('FONTSIZE', (0, 1), (-1, -1), 10),
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a237e')),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                        ('ROWBACKGROUNDS', (0, 1), (-1, -1), ['#F0F0F0', 'white']),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                        ('TOPPADDING', (0, 0), (-1, -1), 8)
+                    ]))
+                    
+                    story.append(gap_table)
+                    story.append(Spacer(1, 20))
+        
+        except Exception as e:
+            st.error(f"Error adding GAP Analysis to report: {str(e)}")
+
         # Build PDF
         try:
             doc.build(story)
@@ -1914,11 +1962,394 @@ def create_province_visualizations(df):
     
     return bar_fig, treemap_fig
 
+def create_monthly_progress_chart(df_forecast, df_actual, chart_title):
+    """Create a monthly progress chart with value labels"""
+    try:
+        # Get the exact start and end dates from forecast
+        start_date = df_forecast["forecast oa date"].min()
+        end_date = df_forecast["forecast oa date"].max()
+        
+        # Process forecast data by month
+        df_forecast_copy = df_forecast.copy()
+        df_forecast_copy['year_month'] = df_forecast_copy['forecast oa date'].dt.strftime('%Y-%m')
+        df_forecast_copy['month'] = df_forecast_copy['forecast oa date'].dt.strftime('%b %Y')
+        
+        # Sort forecast data by date to ensure proper cumulative calculation
+        df_forecast_copy = df_forecast_copy.sort_values('forecast oa date')
+        
+        # Calculate cumulative forecast by month
+        monthly_forecast = df_forecast_copy.groupby('year_month').size()
+        monthly_forecast_cumsum = monthly_forecast.cumsum()
+        
+        # Create month labels with proper sorting
+        month_labels = {}
+        month_dates = {}
+        for year_month, group in df_forecast_copy.groupby('year_month'):
+            month_start = group['forecast oa date'].min()
+            month_labels[year_month] = month_start.strftime('%b %Y')
+            month_dates[year_month] = month_start
+        
+        # Initialize variables for actual data
+        monthly_actual_cumsum = pd.Series()
+        actual_indices = []
+        actual_values = []
+        actual_months = []
+        gaps = []
+        
+        # Process actual data by month
+        if not df_actual.empty:
+            df_actual_copy = df_actual.copy()
+            df_actual_copy['year_month'] = df_actual_copy['oa actual'].dt.strftime('%Y-%m')
+            df_actual_copy = df_actual_copy.sort_values('oa actual')
+            monthly_actual = df_actual_copy.groupby('year_month').size()
+            monthly_actual_cumsum = monthly_actual.cumsum()
+            
+            # Map actual months to forecast month indices
+            month_to_index = {month: idx for idx, month in enumerate(monthly_forecast_cumsum.index)}
+            
+            for month in monthly_actual_cumsum.index:
+                if month in month_to_index:
+                    actual_indices.append(month_to_index[month])
+                    actual_values.append(monthly_actual_cumsum[month])
+                    actual_months.append(month)
+            
+            # Calculate monthly gaps
+            for month in actual_months:
+                month_idx = month_to_index[month]
+                forecast_months = [m for m in monthly_forecast_cumsum.index if month_dates[m] <= month_dates[month]]
+                if forecast_months:
+                    forecast_value = monthly_forecast_cumsum[forecast_months[-1]]
+                    actual_value = monthly_actual_cumsum[month]
+                    gap = actual_value - forecast_value
+                    gaps.append((month_idx, gap, month))
+
+        # Create the figure
+        fig = go.Figure()
+
+        # Add target line with consistent style
+        x_forecast = list(range(len(monthly_forecast_cumsum)))
+        fig.add_trace(go.Scatter(
+            x=x_forecast,
+            y=monthly_forecast_cumsum.values,
+            name=f"Target ({len(df_forecast):,} sites)",
+            line=dict(
+                color='#1f77b4',  # Match weekly chart blue
+                width=2,
+                shape='spline',
+                smoothing=0.3
+            ),
+            mode="lines+markers+text",
+            text=monthly_forecast_cumsum.values.astype(int),
+            textposition="top center",
+            textfont=dict(size=10, color='#1f77b4'),
+            fill='tozeroy',
+            fillcolor="rgba(31, 119, 180, 0.1)",
+            hovertemplate=(
+                "<b>Target Progress</b><br>" +
+                "Month: %{customdata}<br>" +
+                "Sites: %{y:,.0f}<br>" +
+                "<extra></extra>"
+            ),
+            customdata=[month_labels[m] for m in monthly_forecast_cumsum.index]
+        ))
+        
+        if not df_actual.empty:
+            completion_rate = (len(df_actual) / len(df_forecast) * 100)
+            
+            # Add actual progress line with consistent style
+            fig.add_trace(go.Scatter(
+                x=actual_indices,
+                y=actual_values,
+                name=f"Completed ({len(df_actual):,} sites, {completion_rate:.1f}%)",
+                line=dict(
+                    color='#2ca02c',  # Match weekly chart green
+                    width=2,
+                    shape='spline',
+                    smoothing=0.3
+                ),
+                mode="lines+markers+text",
+                text=actual_values,
+                textposition="bottom center",
+                textfont=dict(size=10, color='#2ca02c'),
+                fill='tozeroy',
+                fillcolor="rgba(44, 160, 44, 0.1)",
+                hovertemplate=(
+                    "<b>Actual Progress</b><br>" +
+                    "Month: %{customdata}<br>" +
+                    "Sites: %{y:,.0f}<br>" +
+                    "<extra></extra>"
+                ),
+                customdata=[month_labels[m] for m in actual_months]
+            ))
+
+            # Add gap bars with consistent style
+            if gaps:
+                positive_gaps = [(idx, gap, month) for idx, gap, month in gaps if gap > 0]
+                negative_gaps = [(idx, gap, month) for idx, gap, month in gaps if gap < 0]
+                
+                if positive_gaps:
+                    x_vals, y_vals, months = zip(*positive_gaps)
+                    fig.add_trace(go.Bar(
+                        x=list(x_vals),
+                        y=list(y_vals),
+                        name="Ahead of Target",
+                        text=[f"+{int(gap):,d}" if not pd.isna(gap) else "" for gap in y_vals],
+                        textposition="outside",
+                        marker=dict(
+                            color='#00CC96',  # Match weekly chart positive color
+                            opacity=0.7,
+                            line=dict(color='rgba(0,0,0,0.1)', width=1)
+                        ),
+                        hovertemplate=(
+                            "<b>Implementation Gap</b><br>" +
+                            "Month: %{customdata}<br>" +
+                            "Gap: %{y:+,.0f} sites<br>" +
+                            "<extra></extra>"
+                        ),
+                        customdata=[month_labels[m] for m in months],
+                        yaxis='y2'
+                    ))
+                
+                if negative_gaps:
+                    x_vals, y_vals, months = zip(*negative_gaps)
+                    fig.add_trace(go.Bar(
+                        x=list(x_vals),
+                        y=list(y_vals),
+                        name="Behind Target",
+                        text=[f"{int(gap):,d}" if not pd.isna(gap) else "" for gap in y_vals],
+                        textposition="outside",
+                        marker=dict(
+                            color='#EF553B',  # Match weekly chart negative color
+                            opacity=0.7,
+                            line=dict(color='rgba(0,0,0,0.1)', width=1)
+                        ),
+                        hovertemplate=(
+                            "<b>Implementation Gap</b><br>" +
+                            "Month: %{customdata}<br>" +
+                            "Gap: %{y:+,.0f} sites<br>" +
+                            "<extra></extra>"
+                        ),
+                        customdata=[month_labels[m] for m in months],
+                        yaxis='y2'
+                    ))
+
+        # Calculate y-axis ranges
+        y_max_main = max(
+            max(monthly_forecast_cumsum.values) if not monthly_forecast_cumsum.empty else 0,
+            max(monthly_actual_cumsum.values) if not monthly_actual_cumsum.empty else 0
+        )
+        
+        if gaps:
+            gap_values = [gap for _, gap, _ in gaps]
+            max_gap = max(gap_values)
+            min_gap = min(gap_values)
+            gap_abs_max = max(abs(min_gap), abs(max_gap))
+            gap_range = [-gap_abs_max * 1.2, gap_abs_max * 1.2]
+        else:
+            gap_range = [-y_max_main * 0.2, y_max_main * 0.2]
+
+        # Update layout with consistent style
+        fig.update_layout(
+            title=dict(
+                text=chart_title,
+                font=dict(size=24, color='#2F2F2F', family="Arial"),
+                x=0.5,
+                xanchor="center",
+                y=0.95,
+                yanchor="top",
+                pad=dict(b=20)
+            ),
+            template="none",
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            hovermode="x unified",
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1,
+                bgcolor="rgba(255, 255, 255, 0.95)",
+                bordercolor='#E9ECEF',
+                borderwidth=1,
+                font=dict(size=12, color='#2F2F2F')
+            ),
+            height=800,
+            margin=dict(t=100, b=150, r=100, l=50, pad=10),
+            xaxis=dict(
+                showgrid=True,
+                gridcolor='#E9ECEF',
+                gridwidth=1,
+                ticktext=[month_labels[m] for m in monthly_forecast_cumsum.index],
+                tickvals=list(range(len(monthly_forecast_cumsum))),
+                tickangle=45,
+                tickfont=dict(size=12, color='#2F2F2F'),
+                title=None,
+                zeroline=False
+            ),
+            yaxis=dict(
+                title=dict(
+                    text="Number of Sites",
+                    font=dict(size=14, color='#2F2F2F')
+                ),
+                showgrid=True,
+                gridcolor='#E9ECEF',
+                gridwidth=1,
+                tickfont=dict(size=12, color='#2F2F2F'),
+                zeroline=True,
+                zerolinecolor='#E9ECEF',
+                zerolinewidth=2,
+                tickformat=",d",
+                range=[0, y_max_main * 1.1]
+            ),
+            yaxis2=dict(
+                title=dict(
+                    text="Gap (Sites)",
+                    font=dict(size=14, color='#2F2F2F')
+                ),
+                overlaying='y',
+                side='right',
+                showgrid=False,
+                zeroline=True,
+                zerolinecolor='#E9ECEF',
+                zerolinewidth=2,
+                tickformat=",d",
+                tickfont=dict(size=12, color='#2F2F2F'),
+                range=gap_range
+            )
+        )
+
+        fig.update_layout(xaxis_rangeslider_visible=False)
+        return fig
+    except Exception as e:
+        st.error(f"Error creating monthly chart: {str(e)}")
+        return None
+
+def create_gap_oa_analysis(df):
+    """Create visualization for GAP OA Analysis of pending sites"""
+    try:
+        # Filter for pending sites (sites without OA actual date)
+        pending_sites = df[df['oa actual'].isna()].copy()
+        
+        if 'gap oa analysis' not in pending_sites.columns:
+            st.error("GAP OA Analysis column not found in the data")
+            return None, None
+            
+        # Group by GAP OA Analysis categories
+        gap_analysis = pending_sites['gap oa analysis'].value_counts()
+        
+        # Calculate percentages
+        total_pending = len(pending_sites)
+        gap_analysis_pct = (gap_analysis / total_pending * 100).round(1)
+        
+        # Create a DataFrame for the visualization
+        gap_df = pd.DataFrame({
+            'Category': gap_analysis.index,
+            'Count': gap_analysis.values,
+            'Percentage': gap_analysis_pct.values
+        })
+        
+        # Sort by count in descending order for both chart and table
+        gap_df = gap_df.sort_values('Count', ascending=True)  # Keep ascending for horizontal bar chart
+        
+        # Define deep, professional colors
+        deep_colors = [
+            '#1a237e',  # Deep Indigo
+            '#311b92',  # Deep Purple
+            '#004d40',  # Deep Teal
+            '#b71c1c',  # Deep Red
+            '#0d47a1',  # Deep Blue
+            '#1b5e20',  # Deep Green
+            '#e65100',  # Deep Orange
+            '#4a148c',  # Deep Purple
+            '#3e2723',  # Deep Brown
+            '#263238',  # Deep Blue Grey
+        ]
+        
+        # Create figure
+        fig = go.Figure()
+        
+        # Add horizontal bar chart with solid deep colors
+        fig.add_trace(go.Bar(
+            y=gap_df['Category'],
+            x=gap_df['Count'],
+            orientation='h',
+            text=[f"{count:,} ({pct:.1f}%)" for count, pct in zip(gap_df['Count'], gap_df['Percentage'])],
+            textposition='outside',
+            marker=dict(
+                color=deep_colors[:len(gap_df)],
+                line=dict(width=1, color='rgba(255,255,255,0.2)')  # Subtle border
+            ),
+            hovertemplate=(
+                "<b>%{y}</b><br>" +
+                "Count: %{x:,}<br>" +
+                "Percentage: %{customdata:.1f}%<br>" +
+                "<extra></extra>"
+            ),
+            customdata=gap_df['Percentage']
+        ))
+        
+        # Update layout with improved styling
+        fig.update_layout(
+            title=dict(
+                text='Implementation GAP Analysis',
+                font=dict(size=24, color='#1a237e', family="Arial"),
+                x=0.5,
+                xanchor="center",
+                y=0.95,
+                yanchor="top",
+                pad=dict(b=20)
+            ),
+            height=max(500, len(gap_df) * 50),  # Increased height per category
+            margin=dict(l=20, r=120, t=100, b=20),  # Increased right margin for labels
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            showlegend=False,
+            bargap=0.3,  # Increased gap between bars
+            xaxis=dict(
+                title=dict(
+                    text="Number of Pending Sites",
+                    font=dict(size=14, color='#1a237e')
+                ),
+                showgrid=True,
+                gridcolor='rgba(26, 35, 126, 0.1)',  # Light indigo grid
+                gridwidth=1,
+                tickfont=dict(size=12, color='#1a237e'),
+                tickformat=",d",
+                zeroline=True,
+                zerolinecolor='rgba(26, 35, 126, 0.2)',
+                zerolinewidth=2
+            ),
+            yaxis=dict(
+                title=None,
+                showgrid=False,
+                tickfont=dict(size=12, color='#1a237e'),
+                ticksuffix="  "  # Add space after category names
+            )
+        )
+        
+        # Sort data in descending order for the summary table
+        gap_df_sorted = gap_df.sort_values('Count', ascending=False)
+        
+        # Add summary table data
+        summary_data = [
+            ["Category", "Count", "Percentage"],
+            *[[cat, f"{count:,}", f"{pct:.1f}%"] 
+              for cat, count, pct in zip(gap_df_sorted['Category'], gap_df_sorted['Count'], gap_df_sorted['Percentage'])]
+        ]
+        
+        return fig, summary_data
+        
+    except Exception as e:
+        st.error(f"Error creating GAP OA Analysis visualization: {str(e)}")
+        return None, None
+
 def main():
     """Main dashboard function"""
-    st.title("📊 Implementation Progress Dashboard")
-    
     try:
+        st.title("📊 Implementation Progress Dashboard")
+        
         # File selection
         script_dir = os.path.dirname(os.path.abspath(__file__))
         default_file = "Cellcard Project_Overall_Implementation_Plan(Sitewise)_V2.2_20250409.xlsx"
@@ -2065,7 +2496,14 @@ def main():
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
         
         # Create tabs for different views
-        tab1, tab2, tab3, tab4 = st.tabs(["📈 Daily Progress", "📊 Weekly Progress", "🗺️ Map View", "📍 Province Analysis"])
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+            "📈 Daily Progress",
+            "📊 Weekly Progress",
+            "📅 Monthly Progress",
+            "🗺️ Map View",
+            "📍 Province Analysis",
+            "🔍 GAP Analysis"
+        ])
         
         with tab1:
             daily_fig = create_plotly_progress_chart(
@@ -2086,6 +2524,15 @@ def main():
                 st.plotly_chart(weekly_fig, use_container_width=True)
                 
         with tab3:
+            monthly_fig = create_monthly_progress_chart(
+                df_forecast,
+                df_actual,
+                "Monthly Implementation Progress"
+            )
+            if monthly_fig is not None:
+                st.plotly_chart(monthly_fig, use_container_width=True)
+        
+        with tab4:
             if selected_sheet in ["349_NOKIA_SWAP(NOKIA)", "185_ALU&HW_SWAP(ALU)", "153_ZTE_UPGRADE", "20_HUAWEI_REDEPLOY(ALU)", "BTB-NEWSITE(ZTE-31&NOKIA-99)"]:
                 st.subheader(f"{selected_sheet} Map View")
                 
@@ -2145,7 +2592,7 @@ def main():
             else:
                 st.info("Map view is not available for this project sheet.")
         
-        with tab4:
+        with tab5:
             if 'province' in df.columns:
                 bar_fig, treemap_fig = create_province_visualizations(df)
                 if bar_fig is not None:
@@ -2155,13 +2602,137 @@ def main():
             else:
                 st.info("Province information is not available in this dataset.")
 
+        with tab6:
+            st.subheader("Implementation GAP Analysis")
+            
+            gap_fig, gap_summary = create_gap_oa_analysis(df)
+            if gap_fig is not None:
+                # Create two columns for the visualization and metrics
+                col1, col2 = st.columns([2, 1])
+                
+                with col1:
+                    st.plotly_chart(gap_fig, use_container_width=True)
+                
+                with col2:
+                    if gap_summary is not None:
+                        # Add summary metrics with improved styling
+                        st.markdown("""
+                            <style>
+                            .metric-card {
+                                background-color: white;
+                                padding: 1rem;
+                                border-radius: 8px;
+                                border-left: 5px solid #1a237e;
+                                margin-bottom: 1rem;
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                            }
+                            .metric-title {
+                                color: #1a237e;
+                                font-size: 1.1rem;
+                                font-weight: 600;
+                                margin-bottom: 0.5rem;
+                            }
+                            .metric-value {
+                                font-size: 2rem;
+                                font-weight: bold;
+                                color: #1a237e;
+                            }
+                            .metric-subtitle {
+                                color: #666;
+                                font-size: 0.9rem;
+                            }
+                            </style>
+                        """, unsafe_allow_html=True)
+                        
+                        # Calculate total pending sites
+                        total_pending = sum(int(row[1].replace(',', '')) for row in gap_summary[1:])
+                        
+                        # Display total pending sites
+                        st.markdown("""
+                            <div class="metric-card">
+                                <div class="metric-title">Total Pending Sites</div>
+                                <div class="metric-value">{:,}</div>
+                            </div>
+                        """.format(total_pending), unsafe_allow_html=True)
+                        
+                        # Display top 3 delay categories
+                        st.markdown("""
+                            <div class="metric-card">
+                                <div class="metric-title">Top Delay Categories</div>
+                        """, unsafe_allow_html=True)
+                        
+                        for i, row in enumerate(gap_summary[1:4], 1):
+                            st.markdown(f"""
+                                <div style="margin-bottom: 1rem;">
+                                    <div style="color: #1a237e; font-weight: 600;">#{i}: {row[0]}</div>
+                                    <div style="font-size: 1.2rem; font-weight: bold;">{row[1]}</div>
+                                    <div class="metric-subtitle">{row[2]} of pending sites</div>
+                                </div>
+                            """, unsafe_allow_html=True)
+                        
+                        st.markdown("</div>", unsafe_allow_html=True)
+                
+                # Add detailed analysis table with improved styling
+                st.markdown("### Detailed Analysis")
+                st.markdown("""
+                    <style>
+                    .gap-summary {
+                        margin-top: 1rem;
+                        padding: 1rem;
+                        background-color: white;
+                        border-radius: 8px;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    }
+                    .gap-summary table {
+                        width: 100%;
+                        border-collapse: collapse;
+                    }
+                    .gap-summary th {
+                        background-color: #1a237e;
+                        color: white;
+                        padding: 12px;
+                        text-align: left;
+                    }
+                    .gap-summary td {
+                        padding: 12px;
+                        border-bottom: 1px solid #e0e0e0;
+                    }
+                    .gap-summary tr:nth-child(even) {
+                        background-color: #f8f9fa;
+                    }
+                    </style>
+                """, unsafe_allow_html=True)
+                
+                # Create table HTML
+                table_html = """
+                    <div class="gap-summary">
+                    <table>
+                    <tr>
+                        <th>{0}</th>
+                        <th>{1}</th>
+                        <th>{2}</th>
+                    </tr>
+                    {3}
+                    </table>
+                    </div>
+                """.format(
+                    gap_summary[0][0],  # Category header
+                    gap_summary[0][1],  # Count header
+                    gap_summary[0][2],  # Percentage header
+                    "\n".join(
+                        f"<tr><td>{row[0]}</td><td>{row[1]}</td><td>{row[2]}</td></tr>"
+                        for row in gap_summary[1:]
+                    )
+                )
+                st.markdown(table_html, unsafe_allow_html=True)
+
         st.markdown('</div>', unsafe_allow_html=True)
         
         # Add Report Generation Section in sidebar
         st.sidebar.markdown("---")
         st.sidebar.subheader("📑 Report Generation")
         
-        if st.sidebar.button("Generate PDF Report"):  # Updated button label
+        if st.sidebar.button("Generate PDF Report"):
             with st.spinner("Generating report..."):
                 st.write("Starting PDF generation process...")
                 
@@ -2206,4 +2777,4 @@ def main():
         st.write("Debug: Main error:", traceback.format_exc())
 
 if __name__ == "__main__":
-    main() 
+    main()
