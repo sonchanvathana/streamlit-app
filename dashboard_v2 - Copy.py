@@ -24,7 +24,6 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 import tempfile
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-import pytz
 
 # Set page configuration
 st.set_page_config(
@@ -1468,184 +1467,292 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
             spaceAfter=12
         ))
         
-        # Get local timezone
-        local_tz = pytz.timezone('Asia/Phnom_Penh')  # Set to Cambodia timezone
-        current_time = datetime.now(local_tz)
-        
         # Add title and date with custom styles
         title = Paragraph(f"Implementation Progress Dashboard - {selected_sheet}", styles['CustomTitle'])
-        date_str = Paragraph(f"Generated on: {current_time.strftime('%d %b %Y %H:%M %Z')}", styles['CustomNormal'])
+        date_str = Paragraph(f"Generated on: {datetime.now().strftime('%d %b %Y %H:%M')}", styles['CustomNormal'])
         story.extend([title, date_str, Spacer(1, 20)])
         
-        # 1. Executive Summary Section
-        story.append(Paragraph("1. Executive Summary", styles['CustomHeading1']))
-        story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
-        story.append(Spacer(1, 12))
+        # Section counter
+        section_num = 1
         
-        # Calculate key metrics for executive summary
-        total_sites = len(df)
-        completed_sites = df['oa actual'].notna().sum()
-        completion_rate = round((completed_sites / total_sites * 100) if total_sites > 0 else 0)
-        
-        if not df.empty:
-            start_date = df["forecast oa date"].min()
-            end_date = df["forecast oa date"].max()
-            elapsed_days = (current_time.replace(tzinfo=None) - start_date).days
-            remaining_days = (end_date - current_time.replace(tzinfo=None)).days
-            daily_rate = round(completed_sites / max(elapsed_days, 1))
-            required_rate = round((total_sites - completed_sites) / max(remaining_days, 1))
-        
-        # Create executive summary table
-        exec_summary_data = [
-            ["Project Overview", "Timeline", "Implementation Rate"],
-            [
-                f"Total Sites: {total_sites:,}\nCompleted: {completed_sites:,}\nProgress: {completion_rate}%",
-                f"Start Date: {start_date.strftime('%d %b %Y')}\nEnd Date: {end_date.strftime('%d %b %Y')}\nElapsed: {elapsed_days} days\nRemaining: {remaining_days} days",
-                f"Current Rate: {daily_rate:,} sites/day\nRequired Rate: {required_rate:,} sites/day\nCompletion Rate: {completion_rate}%"
-            ]
-        ]
-        
-        exec_table = Table(exec_summary_data, colWidths=[160, 160, 160])
-        exec_table.setStyle(TableStyle([
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 12),
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 1), (-1, -1), 10),
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2E5077')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('ROWHEIGHT', (0, 1), (-1, 1), 80),
-        ]))
-        
-        story.append(exec_table)
-        story.append(Spacer(1, 20))
-        
-        # 2. Implementation Progress Charts
-        story.append(Paragraph("2. Implementation Progress", styles['CustomHeading1']))
+        # 1. Overall Progress Section
+        story.append(Paragraph(f"{section_num}. Overall Progress", styles['CustomHeading1']))
         story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
         story.append(Spacer(1, 12))
         
         try:
-            # Add daily progress chart
+            # Calculate metrics
+            total_sites = len(df)
+            completed_sites = df['oa actual'].notna().sum()
+            completion_rate = round((completed_sites / total_sites * 100) if total_sites > 0 else 0)
+            
+            # Calculate timeline metrics
+            if not df.empty:
+                start_date = df["forecast oa date"].min()
+                end_date = df["forecast oa date"].max()
+                current_date = datetime.now()
+                elapsed_days = (current_date - start_date).days
+                remaining_days = (end_date - current_date).days
+                daily_rate = round(completed_sites / max(elapsed_days, 1))
+                required_rate = round((total_sites - completed_sites) / max(remaining_days, 1))
+            
+            # Create overall metrics table with standard font
+            progress_data = [
+                ["Metric", "Value"],
+                ["Total Sites", f"{total_sites:,}"],
+                ["Completed Sites", f"{completed_sites:,}"],
+                ["Completion Rate", f"{completion_rate}%"],
+                ["Days Elapsed", f"{elapsed_days:,}"],
+                ["Days Remaining", f"{remaining_days:,}"],
+                ["Current Daily Rate", f"{daily_rate:,} sites/day"],
+                ["Required Daily Rate", f"{required_rate:,} sites/day"]
+            ]
+            
+            progress_table = Table(progress_data, colWidths=[200, 200])
+            progress_table.setStyle(TableStyle([
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 11),
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2E5077')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),  # Bold font for header
+            ]))
+            
+            story.append(progress_table)
+            story.append(Spacer(1, 20))
+            
+            # Add Province Summary if available
+            if 'province' in df.columns:
+                section_num += 1
+                story.append(Paragraph(f"{section_num}. Completed Sites by Province", styles['CustomHeading1']))
+                story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
+                story.append(Spacer(1, 12))
+                
+                # Calculate province metrics
+                total_by_province = df['province'].value_counts()
+                df_actual = df[df['oa actual'].notna()]
+                completed_by_province = df_actual['province'].value_counts()
+                
+                # Create province summary table with standard font
+                province_data = [["No.", "Province", "Completed Sites", "Total Sites", "Completion Rate"]]
+                
+                # Create a list of provinces with their metrics for sorting
+                province_metrics = []
+                for province in total_by_province.index:
+                    total_sites = total_by_province.get(province, 0)
+                    completed_sites = completed_by_province.get(province, 0)
+                    completion_rate = round((completed_sites / total_sites * 100), 1)
+                    province_metrics.append({
+                        'province': province,
+                        'total_sites': total_sites,
+                        'completed_sites': completed_sites,
+                        'completion_rate': completion_rate
+                    })
+                
+                # Sort provinces by total sites (descending)
+                province_metrics.sort(key=lambda x: x['total_sites'], reverse=True)
+                
+                # Add sorted data to table
+                for idx, metrics in enumerate(province_metrics, 1):
+                    province_data.append([
+                        str(idx),
+                        metrics['province'],
+                        f"{metrics['completed_sites']:,}",
+                        f"{metrics['total_sites']:,}",
+                        f"{metrics['completion_rate']:.1f}%"
+                    ])
+                
+                # Create table with adjusted column widths
+                province_table = Table(
+                    province_data,
+                    colWidths=[30, 120, 80, 80, 70],  # Adjusted widths
+                    repeatRows=1  # Repeat header row on new pages
+                )
+                
+                # Apply consistent styling
+                province_table.setStyle(TableStyle([
+                    ('ALIGN', (0, 0), (0, -1), 'CENTER'),  # Center align first column (No.)
+                    ('ALIGN', (1, 0), (1, -1), 'LEFT'),    # Left align province names
+                    ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),  # Right align numbers
+                    ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2E5077')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                    ('TOPPADDING', (0, 0), (-1, -1), 8),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('LINEBELOW', (0, 0), (-1, 0), 2, colors.HexColor('#2E5077')),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), ['#F0F0F0', 'white'])  # Alternating row colors
+                ]))
+                
+                story.append(province_table)
+                story.append(Spacer(1, 20))
+        except Exception as e:
+            st.error(f"Error adding progress metrics: {str(e)}")
+        
+        # 2. Progress Charts Section
+        section_num += 1
+        story.append(Paragraph(f"{section_num}. Progress Charts", styles['CustomHeading1']))
+        story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
+        story.append(Spacer(1, 12))
+        
+        try:
+            # Create and add daily progress chart
             daily_fig = create_plotly_progress_chart(df, df[df['oa actual'].notna()], "Daily Implementation Progress")
             if daily_fig:
+                st.write("Debug: Converting daily chart to image...")
                 img_buffer = convert_plotly_to_image(daily_fig)
                 if img_buffer:
                     story.append(Image(img_buffer, width=500, height=300))
                     story.append(Spacer(1, 20))
+                    st.write("Debug: Daily chart added successfully")
             
-            # Add weekly progress chart
+            # Create and add weekly progress chart
             weekly_fig = create_weekly_progress_chart(df, df[df['oa actual'].notna()], "Weekly Implementation Progress")
             if weekly_fig:
+                st.write("Debug: Converting weekly chart to image...")
                 img_buffer = convert_plotly_to_image(weekly_fig)
                 if img_buffer:
                     story.append(Image(img_buffer, width=500, height=300))
                     story.append(Spacer(1, 20))
+                    st.write("Debug: Weekly chart added successfully")
+                    
         except Exception as e:
             st.error(f"Error adding progress charts: {str(e)}")
+            story.append(Paragraph("Error: Could not generate progress charts", styles['CustomNormal']))
         
-        # 3. Geographic Distribution
-        story.append(Paragraph("3. Geographic Distribution", styles['CustomHeading1']))
+        # 3. Implementation Map Section
+        section_num += 1
+        story.append(Paragraph(f"{section_num}. Implementation Map", styles['CustomHeading1']))
         story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
         story.append(Spacer(1, 12))
         
         try:
+            st.write("Debug: Generating map for PDF...")
             map_buffer = capture_map_for_pdf(df, provinces_gdf, selected_sheet)
+            
             if map_buffer:
-                map_img = Image(map_buffer, width=500, height=400)
+                map_img = Image(map_buffer, width=500, height=400)  # Increased height for better visibility
                 story.append(map_img)
                 story.append(Spacer(1, 20))
+                st.write("Debug: Map added successfully")
+            else:
+                story.append(Paragraph("Error: Could not generate map", styles['CustomNormal']))
+                st.error("Failed to generate map for PDF")
         except Exception as e:
-            st.error(f"Error adding map: {str(e)}")
+            st.error(f"Error adding map to PDF: {str(e)}")
+            story.append(Paragraph("Error: Could not add map to report", styles['CustomNormal']))
         
-        # 4. Provincial Analysis
+        # Add Province Analysis Section with visualizations
         if 'province' in df.columns:
-            story.append(Paragraph("4. Provincial Analysis", styles['CustomHeading1']))
+            section_num += 1
+            story.append(Paragraph(f"{section_num}. Province Implementation Analysis", styles['CustomHeading1']))
             story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
             story.append(Spacer(1, 12))
             
-            # Calculate province metrics
-            province_data = []
+            # Calculate metrics by province
             total_by_province = df['province'].value_counts()
-            completed_by_province = df[df['oa actual'].notna()]['province'].value_counts()
+            df_actual = df[df['oa actual'].notna()]
+            completed_by_province = df_actual['province'].value_counts()
             
+            # Create completion percentage data and sort by total sites
+            province_data = []
             for province in total_by_province.index:
-                total = total_by_province.get(province, 0)
-                completed = completed_by_province.get(province, 0)
-                completion_rate = round((completed / total * 100), 1)
+                total_sites = total_by_province.get(province, 0)
+                completed_sites = completed_by_province.get(province, 0)
+                completion_rate = round((completed_sites / total_sites * 100), 1)
                 province_data.append({
                     'Province': province,
-                    'Total': total,
-                    'Completed': completed,
-                    'Rate': completion_rate
+                    'Total Sites': total_sites,
+                    'Completed Sites': completed_sites,
+                    'Completion Rate': completion_rate
                 })
             
-            # Sort by total sites descending
-            province_data.sort(key=lambda x: x['Total'], reverse=True)
+            # Sort by total sites (descending)
+            province_data.sort(key=lambda x: x['Total Sites'], reverse=True)
+            df_province = pd.DataFrame(province_data)
             
-            # Create province analysis visualization
-            fig_province = go.Figure()
+            # Create and add horizontal bar chart with improved layout
+            fig_completion = go.Figure()
             
-            # Add bars for total and completed sites
-            provinces = [p['Province'] for p in province_data]
-            totals = [p['Total'] for p in province_data]
-            completed = [p['Completed'] for p in province_data]
-            
-            fig_province.add_trace(go.Bar(
-                y=provinces,
-                x=totals,
+            # Add bars for total sites
+            fig_completion.add_trace(go.Bar(
+                y=[f"{i+1}. {row['Province']}" for i, row in enumerate(province_data)],  # Add index numbers
+                x=[row['Total Sites'] for row in province_data],
                 name='Total Sites',
                 orientation='h',
-                marker_color='rgba(169, 169, 169, 0.9)'
+                marker=dict(color='rgba(169, 169, 169, 0.9)'),
+                text=[f"{row['Total Sites']:,}" for row in province_data],
+                textposition='outside',
+                textfont=dict(color='rgba(60, 60, 60, 1)')
             ))
             
-            fig_province.add_trace(go.Bar(
-                y=provinces,
-                x=completed,
+            # Add bars for completed sites
+            fig_completion.add_trace(go.Bar(
+                y=[f"{i+1}. {row['Province']}" for i, row in enumerate(province_data)],  # Add index numbers
+                x=[row['Completed Sites'] for row in province_data],
                 name='Completed Sites',
                 orientation='h',
-                marker_color='rgba(0, 100, 0, 0.85)'
+                marker=dict(color='rgba(0, 100, 0, 0.85)'),
+                text=[f"{row['Completed Sites']:,} ({row['Completion Rate']:.1f}%)" for row in province_data],
+                textposition='inside',
+                textfont=dict(color='white')
             ))
             
-            fig_province.update_layout(
+            fig_completion.update_layout(
+                title='Province Implementation Progress',
                 barmode='overlay',
-                height=max(400, len(province_data) * 30),
+                height=max(400, len(df_province) * 30),
                 margin=dict(l=150, r=150, t=40, b=40),
-                title='Provincial Implementation Status',
-                showlegend=True
+                showlegend=True,
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1
+                ),
+                font=dict(size=10)
             )
             
             # Convert chart to image and add to PDF
-            img_buffer = convert_plotly_to_image(fig_province)
+            img_buffer = convert_plotly_to_image(fig_completion)
             if img_buffer:
-                story.append(Image(img_buffer, width=500, height=max(300, len(province_data) * 20)))
+                story.append(Image(img_buffer, width=450, height=max(300, len(df_province) * 20)))
                 story.append(Spacer(1, 20))
             
-            # Add detailed province table
-            table_data = [["Province", "Total Sites", "Completed", "Completion Rate", "Status"]]
-            for p in province_data:
-                status = "On Track" if p['Rate'] >= (completion_rate) else "Needs Attention"
+            # Add province summary table with improved styling
+            table_data = [["No.", "Province", "Completed Sites", "Total Sites", "Completion Rate"]]
+            for idx, row in enumerate(province_data, 1):
                 table_data.append([
-                    p['Province'],
-                    f"{p['Total']:,}",
-                    f"{p['Completed']:,}",
-                    f"{p['Rate']:.1f}%",
-                    status
+                    str(idx),
+                    row['Province'],
+                    f"{row['Completed Sites']:,}",
+                    f"{row['Total Sites']:,}",
+                    f"{row['Completion Rate']:.1f}%"
                 ])
             
-            province_table = Table(table_data, colWidths=[120, 80, 80, 100, 100])
+            province_table = Table(
+                table_data,
+                colWidths=[30, 120, 80, 80, 70],
+                repeatRows=1
+            )
+            
             province_table.setStyle(TableStyle([
-                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
-                ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('ALIGN', (0, 0), (0, -1), 'CENTER'),  # Center align first column (No.)
+                ('ALIGN', (1, 0), (1, -1), 'LEFT'),    # Left align province names
+                ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),  # Right align numbers
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
                 ('FONTSIZE', (0, 0), (-1, -1), 10),
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2E5077')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
                 ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), ['#F0F0F0', 'white']),
-                ('TEXTCOLOR', (-1, 1), (-1, -1), lambda x: colors.green if x == 'On Track' else colors.red)
+                ('LINEBELOW', (0, 0), (-1, 0), 2, colors.HexColor('#2E5077')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), ['#F0F0F0', 'white'])
             ]))
             
             story.append(province_table)
@@ -1653,15 +1760,21 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
         
         # Build PDF
         try:
+            st.write("Debug: Building final PDF...")
             doc.build(story)
             buffer.seek(0)
+            st.write("Debug: PDF generation completed successfully")
             return buffer
         except Exception as e:
             st.error(f"Error building PDF: {str(e)}")
+            import traceback
+            st.error(f"Detailed error: {traceback.format_exc()}")
             return None
             
     except Exception as e:
         st.error(f"Error in PDF generation: {str(e)}")
+        import traceback
+        st.error(f"Detailed error: {traceback.format_exc()}")
         return None
 
 def create_province_visualizations(df):
