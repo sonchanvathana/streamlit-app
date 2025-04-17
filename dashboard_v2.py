@@ -884,19 +884,19 @@ def plot_map(df, cambodia_provinces_gdf=None, sheet_name=None):
 
         # Determine vendor name and map type based on sheet name
         if sheet_name:
-            if "349_NOKIA_SWAP" in sheet_name:
+            if "BTB PROJECT_NOKIA_SWAP" in sheet_name:
                 vendor_name = "Nokia Swap"
                 use_clusters = True
-            elif "185_ALU&HW_SWAP" in sheet_name:
+            elif "ALU PROJECT_ALU&HW_SWAP" in sheet_name:
                 vendor_name = "ALU & HW Swap"
                 use_clusters = True
-            elif "153_ZTE_UPGRADE" in sheet_name:
+            elif "ALU PROJECT_ZTE_UPGRADE" in sheet_name:
                 vendor_name = "ZTE Upgrade"
                 use_clusters = False
-            elif "20_HUAWEI_REDEPLOY" in sheet_name:
+            elif "ALU PROJECT_HUAWEI_REDEPLOY" in sheet_name:
                 vendor_name = "Huawei Redeploy"
                 use_clusters = False
-            elif "BTB-NEWSITE" in sheet_name:
+            elif "BTB PROJECT-NEWSITE" in sheet_name:
                 vendor_name = "BTB New Sites"
                 use_clusters = False
             else:
@@ -2533,7 +2533,9 @@ def main():
                 st.plotly_chart(monthly_fig, use_container_width=True)
         
         with tab4:
-            if selected_sheet in ["349_NOKIA_SWAP(NOKIA)", "185_ALU&HW_SWAP(ALU)", "153_ZTE_UPGRADE", "20_HUAWEI_REDEPLOY(ALU)", "BTB-NEWSITE(ZTE-31&NOKIA-99)"]:
+            if selected_sheet in ["BTB PROJECT_NOKIA_SWAP(349)", "ALU PROJECT_ALU&HW_SWAP(185)", 
+                                "ALU PROJECT_ZTE_UPGRADE(153)", "ALU PROJECT_HUAWEI_REDEPLOY(20)", 
+                                "BTB PROJECT-NEWSITE(130)"]:
                 st.subheader(f"{selected_sheet} Map View")
                 
                 try:
