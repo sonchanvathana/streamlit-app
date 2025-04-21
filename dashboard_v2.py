@@ -2420,6 +2420,280 @@ def create_gap_oa_analysis(df):
         st.error(f"Error creating GAP OA Analysis visualization: {str(e)}")
         return None, None
 
+# Define status colors and symbols for milestone analysis
+STATUS_COLORS = {
+    'Completed': {'color': '#2ECC71', 'symbol': '✓'},  # Green
+    'In Progress': {'color': '#F1C40F', 'symbol': '◔'},  # Yellow
+    'Not Started': {'color': '#E74C3C', 'symbol': '○'}   # Red
+}
+
+def create_cluster_milestone_analysis(df):
+    """Create Cluster Swap Milestone analysis visualization with timeline style"""
+    if 'cluster_id' not in df.columns or df['cluster_id'].isna().all():
+        return None, None, None
+
+    # Process cluster data
+    cluster_data = []
+    for cluster in df['cluster_id'].unique():
+        if pd.isna(cluster):
+            continue
+            
+        cluster_df = df[df['cluster_id'] == cluster]
+        total_sites = len(cluster_df)
+        completed_sites = cluster_df['oa actual'].notna().sum()
+        pending_sites = cluster_df[cluster_df['oa actual'].isna()]
+        
+        # Get forecast date and latest actual date for the cluster
+        forecast_date = cluster_df['forecast oa date'].max()
+        latest_actual = cluster_df[cluster_df['oa actual'].notna()]['oa actual'].max() if completed_sites > 0 else None
+        
+        # Get the week number for forecast date
+        forecast_week = forecast_date.isocalendar()[1] if forecast_date is not None else None
+        actual_week = latest_actual.isocalendar()[1] if latest_actual is not None else None
+        
+        # Determine cluster status
+        if completed_sites == total_sites:
+            status = 'Completed'
+        elif completed_sites == 0:
+            status = 'Not Started'
+        else:
+            status = 'In Progress'
+            
+        cluster_data.append({
+            'cluster_id': cluster,
+            'total_sites': total_sites,
+            'completed_sites': completed_sites,
+            'completion_rate': (completed_sites / total_sites * 100),
+            'status': status,
+            'pending_sites': pending_sites,
+            'forecast_date': forecast_date,
+            'forecast_week': forecast_week,
+            'actual_date': latest_actual,
+            'actual_week': actual_week,
+            'symbol': STATUS_COLORS[status]['symbol'],
+            'color': STATUS_COLORS[status]['color']
+        })
+    
+    # Convert to DataFrame and sort by forecast date
+    cluster_df = pd.DataFrame(cluster_data)
+    cluster_df = cluster_df.sort_values('forecast_date')
+    
+    # Create timeline visualization
+    fig = go.Figure()
+    
+    # Add timeline base
+    min_date = cluster_df['forecast_date'].min()
+    max_date = cluster_df['forecast_date'].max()
+    if pd.notna(max_date) and pd.notna(min_date):
+        date_range = (max_date - min_date).days
+        min_date = min_date - pd.Timedelta(days=date_range * 0.1)
+        max_date = max_date + pd.Timedelta(days=date_range * 0.1)
+        
+        week_dates = pd.date_range(start=min_date, end=max_date, freq='W-MON')
+        fig.add_trace(go.Scatter(
+            x=week_dates,
+            y=[0] * len(week_dates),
+            mode='markers',
+            marker=dict(size=0),
+            showlegend=False
+        ))
+
+    # Add legend traces first (invisible markers)
+    for status, props in STATUS_COLORS.items():
+        fig.add_trace(go.Scatter(
+            x=[None],
+            y=[None],
+            mode='markers+text',
+            name=status,
+            marker=dict(
+                symbol='triangle-right',
+                size=12,
+                color=props['color']
+            ),
+            text=props['symbol'],
+            textposition='middle right',
+            showlegend=True
+        ))
+
+    # Add milestone flags for each cluster
+    y_offset = 1
+    for _, row in cluster_df.iterrows():
+        # Add cluster label on the left
+        fig.add_annotation(
+            x=min_date,
+            y=y_offset,
+            text=f"{row['symbol']} {row['cluster_id']}",
+            showarrow=False,
+            xanchor='right',
+            yanchor='middle',
+            font=dict(
+                color=row['color'],
+                size=12
+            ),
+            xshift=-10
+        )
+        
+        # Add milestone marker
+        fig.add_trace(go.Scatter(
+            x=[row['forecast_date']],
+            y=[y_offset],
+            mode='markers',
+            marker=dict(
+                symbol='triangle-right',
+                size=12,
+                color=row['color'],
+                line=dict(color='white', width=1)
+            ),
+            name=row['status'],
+            hovertemplate=(
+                f"<b>{row['cluster_id']}</b><br>" +
+                f"Date: %{{x|%d/%m/%Y}}<br>" +
+                f"Status: {row['status']}<br>" +
+                f"Progress: {row['completed_sites']}/{row['total_sites']} ({row['completion_rate']:.1f}%)<br>" +
+                "<extra></extra>"
+            ),
+            showlegend=False
+        ))
+        
+        # Add completion marker for completed clusters
+        if row['status'] == 'Completed' and pd.notna(row['actual_date']):
+            fig.add_trace(go.Scatter(
+                x=[row['actual_date']],
+                y=[y_offset],
+                mode='markers',
+                marker=dict(
+                    symbol='diamond',
+                    size=8,
+                    color=row['color'],
+                    line=dict(color='white', width=1)
+                ),
+                name='Completion',
+                hovertemplate=(
+                    f"<b>{row['cluster_id']} Completed</b><br>" +
+                    f"Date: %{{x|%d/%m/%Y}}<br>" +
+                    "<extra></extra>"
+                ),
+                showlegend=False
+            ))
+        
+        y_offset += 0.3
+
+    # Add today's date line
+    today = pd.Timestamp.now()
+    if min_date <= today <= max_date:
+        fig.add_shape(
+            type="line",
+            x0=today,
+            x1=today,
+            y0=-0.5,
+            y1=y_offset,
+            line=dict(color="red", width=1, dash="dash"),
+            name="Today"
+        )
+        fig.add_annotation(
+            x=today,
+            y=y_offset,
+            text="Today",
+            showarrow=True,
+            arrowhead=1,
+            ax=0,
+            ay=-20,
+            font=dict(color="red", size=10)
+        )
+
+    # Update layout
+    fig.update_layout(
+        title=dict(
+            text='Cluster Implementation Timeline',
+            x=0.5,
+            xanchor='center',
+            font=dict(size=20, color='#2F2F2F')
+        ),
+        showlegend=True,
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='right',
+            x=1,
+            bgcolor='rgba(255,255,255,0.9)',
+            bordercolor='#E9ECEF'
+        ),
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        height=max(300, len(cluster_df) * 25),
+        margin=dict(l=120, r=50, t=80, b=50),  # Increased left margin for labels
+        xaxis=dict(
+            showgrid=True,
+            gridcolor='rgba(0,0,0,0.1)',
+            tickformat='%d-%b',
+            tickangle=45,
+            tickmode='array',
+            ticktext=[d.strftime('W%V') for d in week_dates],
+            tickvals=week_dates,
+            range=[min_date, max_date],
+            title=None
+        ),
+        yaxis=dict(
+            showgrid=False,
+            showticklabels=False,
+            range=[-0.5, y_offset + 0.5]
+        ),
+        hovermode='closest'
+    )
+
+    # Create timeline data for display
+    timeline_data = []
+    for idx, row in cluster_df.iterrows():
+        # Format weeks properly - remove decimal points
+        forecast_week_str = f"Week {int(row['forecast_week'])}" if pd.notna(row['forecast_week']) else '-'
+        actual_week_str = f"Week {int(row['actual_week'])}" if pd.notna(row['actual_week']) else '-'
+        
+        timeline_data.append({
+            'No.': len(timeline_data) + 1,  # Add index starting from 1
+            'Milestone': row['symbol'],
+            'Cluster ID': f"{row['cluster_id']} ({row['total_sites']} sites)",
+            'Status': row['status'],
+            'Progress': f"{row['completion_rate']:.1f}% ({row['completed_sites']}/{row['total_sites']})",
+            'Forecast Week': forecast_week_str,
+            'Forecast Date': row['forecast_date'].strftime('%d %b %Y'),
+            'Actual Week': actual_week_str,
+            'Completion Date': row['actual_date'].strftime('%d %b %Y') if pd.notna(row['actual_date']) else '-',
+            'Pending Sites': len(row['pending_sites']),
+            '_pending_list': row['pending_sites'],
+            '_sort_status': 1 if row['status'] == 'Completed' else (2 if row['status'] == 'In Progress' else 3)  # For sorting
+        })
+    
+    # Convert to DataFrame and sort by status (Completed first, then In Progress, then Not Started)
+    timeline_df = pd.DataFrame(timeline_data)
+    timeline_df = timeline_df.sort_values(['_sort_status', 'Cluster ID'])
+    timeline_df = timeline_df.drop('_sort_status', axis=1)  # Remove the sorting column
+    timeline_df.index = range(1, len(timeline_df) + 1)  # Reset index to start from 1
+    
+    # Create summary statistics
+    summary_data = []
+    for status in ['Completed', 'In Progress', 'Not Started']:
+        status_clusters = cluster_df[cluster_df['status'] == status]
+        if not status_clusters.empty:
+            total_sites = status_clusters['total_sites'].sum()
+            completed_sites = status_clusters['completed_sites'].sum()
+            cluster_count = len(status_clusters)
+            completion_rate = (completed_sites / total_sites * 100)
+            symbol = status_clusters.iloc[0]['symbol']
+            
+            summary_data.append({
+                'Status': status,
+                'Symbol': symbol,
+                'Clusters': cluster_count,
+                'Total Sites': total_sites,
+                'Completed': completed_sites,
+                'Completion Rate': completion_rate
+            })
+    
+    summary_df = pd.DataFrame(summary_data)
+    
+    return fig, summary_df, timeline_df
+
 def main():
     """Main dashboard function"""
     try:
@@ -2571,13 +2845,14 @@ def main():
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
         
         # Create tabs for different views
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "📈 Daily Progress",
             "📊 Weekly Progress",
             "📅 Monthly Progress",
             "🗺️ Map View",
             "📍 Province Analysis",
-            "🔍 GAP Analysis"
+            "🔍 GAP Analysis",
+            "🎯 Cluster Milestone"
         ])
         
         with tab1:
@@ -2803,6 +3078,105 @@ def main():
                 )
                 st.markdown(table_html, unsafe_allow_html=True)
 
+        # Add Cluster Swap Milestone tab
+        with tab7:
+            if selected_sheet in ["BTB PROJECT_NOKIA_SWAP(349)", "ALU PROJECT_ALU&HW_SWAP(185)"]:
+                st.markdown("### 📍 Cluster Implementation Timeline")
+                st.markdown("""
+                This visualization shows the implementation timeline for each cluster, with status indicators:
+                - ✓ Completed: All sites in the cluster are completed
+                - ◔ In Progress: Some sites are completed, others pending
+                - ○ Not Started: No sites completed yet
+                """)
+                
+                milestone_fig, milestone_summary, timeline_df = create_cluster_milestone_analysis(df)
+                
+                if milestone_fig is not None:
+                    # Display the main visualization
+                    st.plotly_chart(milestone_fig, use_container_width=True)
+                    
+                    # Display summary metrics in columns
+                    st.markdown("#### Summary Metrics")
+                    cols = st.columns(len(milestone_summary))
+                    for idx, (_, row) in enumerate(milestone_summary.iterrows()):
+                        with cols[idx]:
+                            st.markdown(f"""
+                            <div style='padding: 1rem; border-radius: 0.5rem; background-color: {STATUS_COLORS[row['Status']]['color']}20;'>
+                                <h3 style='margin: 0; color: {STATUS_COLORS[row['Status']]['color']};'>{row['Symbol']} {row['Status']}</h3>
+                                <p style='margin: 0.5rem 0;'>
+                                    Clusters: {row['Clusters']}<br>
+                                    Sites: {row['Completed']}/{row['Total Sites']}<br>
+                                    Progress: {row['Completion Rate']:.1f}%
+                                </p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    
+                    # Create tabs for different views
+                    timeline_tab1, timeline_tab2, timeline_tab3 = st.tabs(["All Clusters", "By Status", "Timeline View"])
+                    
+                    with timeline_tab1:
+                        # Sort the DataFrame by status priority
+                        display_df = timeline_df.drop(['_pending_list', 'Milestone', 'No.'], axis=1, errors='ignore').copy()  # Remove extra columns including any existing No. column
+                        status_order = {'Completed': 0, 'In Progress': 1, 'Not Started': 2}
+                        display_df['_status_order'] = display_df['Status'].map(status_order)
+                        display_df = display_df.sort_values('_status_order').drop('_status_order', axis=1)
+                        
+                        # Create a clean index starting from 1
+                        display_df.index = pd.RangeIndex(start=1, stop=len(display_df) + 1, name='No.')
+                        
+                        # Apply styling
+                        styled_df = display_df.style.apply(lambda x: [
+                            f"background-color: {STATUS_COLORS[x['Status']]['color']}20" for _ in x
+                        ], axis=1)
+                        
+                        # Display the styled DataFrame
+                        st.dataframe(styled_df, use_container_width=True)
+                    
+                    with timeline_tab2:
+                        # Group by status
+                        for status in ['Completed', 'In Progress', 'Not Started']:
+                            status_data = timeline_df[timeline_df['Status'] == status]
+                            if not status_data.empty:
+                                st.markdown(f"#### {status}")
+                                cols = st.columns(min(3, len(status_data)))
+                                for idx, (_, row) in enumerate(status_data.iterrows()):
+                                    with cols[idx % 3]:
+                                        st.markdown(f"""
+                                        <div style='padding: 1rem; border-radius: 0.5rem; background-color: {STATUS_COLORS[status]['color']}20;'>
+                                            <h4 style='margin: 0;'>{row['Cluster ID']}</h4>
+                                            <p style='margin: 0.5rem 0;'>
+                                                Progress: {row['Progress']}<br>
+                                                Target: {row['Forecast Date']}<br>
+                                                {f"Completed: {row['Completion Date']}" if status == 'Completed' else f"Pending: {row['Pending Sites']} sites"}
+                                            </p>
+                                        </div>
+                                        """, unsafe_allow_html=True)
+                    
+                    with timeline_tab3:
+                        # Sort by status and then by forecast date
+                        timeline_view = timeline_df.copy()
+                        timeline_view['_sort_status'] = timeline_view['Status'].map({'Completed': 1, 'In Progress': 2, 'Not Started': 3})
+                        timeline_view = timeline_view.sort_values(['_sort_status', 'Forecast Date'])
+                        
+                        st.markdown("#### Timeline View")
+                        for _, row in timeline_view.iterrows():
+                            st.markdown(f"""
+                            <div style='padding: 1rem; margin: 0.5rem 0; border-radius: 0.5rem; background-color: {STATUS_COLORS[row['Status']]['color']}20;'>
+                                <div style='display: flex; justify-content: space-between; align-items: center;'>
+                                    <h4 style='margin: 0;'>{row['Cluster ID']}</h4>
+                                    <span>{row['Status']}</span>
+                                </div>
+                                <p style='margin: 0.5rem 0;'>
+                                    Progress: {row['Progress']}<br>
+                                    Forecast: {row['Forecast Week']} ({row['Forecast Date']})<br>
+                                    {f"Completed: {row['Actual Week']} ({row['Completion Date']})" if row['Status'] == 'Completed' else f"Pending Sites: {row['Pending Sites']}"}
+                                </p>
+                            </div>
+                            """, unsafe_allow_html=True)
+            else:
+                st.warning("No cluster data available for milestone analysis.")
+            st.info("Cluster Milestone analysis is only available for BTB PROJECT_NOKIA_SWAP(349) and ALU PROJECT_ALU&HW_SWAP(185) sheets.")
+    
         st.markdown('</div>', unsafe_allow_html=True)
         
         # Add Report Generation Section in sidebar
