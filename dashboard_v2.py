@@ -711,38 +711,68 @@ def create_project_summary(df_forecast, df_actual):
     max_weekly_rate = int(weekly_completions.max())
     min_weekly_rate = int(weekly_completions.min())
     
-    # Calculate current week's progress
+    # Calculate current week's progress using ISO week
     current_date = datetime.now()
-    current_week_start = current_date - pd.Timedelta(days=current_date.weekday())
+    # Get the current ISO week start (Monday)
+    current_week_start = current_date - pd.Timedelta(days=current_date.isocalendar()[2] - 1)
+    current_week_start = current_week_start.replace(hour=0, minute=0, second=0, microsecond=0)
     current_week_end = current_week_start + pd.Timedelta(days=7)
-    last_week_start = current_week_start - pd.Timedelta(weeks=1)
-    
-    # Get weekly forecast and actual counts
+    last_week_start = current_week_start - pd.Timedelta(days=7)
+    last_week_end = current_week_start
+    next_week_start = current_week_end
+    next_week_end = next_week_start + pd.Timedelta(days=7)
+
+    # Get weekly forecast and actual counts with corrected ISO week ranges
     last_week_forecast = len(df_forecast[
         (df_forecast["forecast oa date"] >= last_week_start) & 
-        (df_forecast["forecast oa date"] < current_week_start)
+        (df_forecast["forecast oa date"] < last_week_end)
     ])
     last_week_actual = len(df_actual[
         (df_actual["oa actual"] >= last_week_start) & 
-        (df_actual["oa actual"] < current_week_start)
+        (df_actual["oa actual"] < last_week_end)
     ])
     
     current_week_forecast = len(df_forecast[
         (df_forecast["forecast oa date"] >= current_week_start) & 
-        (df_forecast["forecast oa date"] <= current_date)
+        (df_forecast["forecast oa date"] < current_week_end)
     ])
     current_week_actual = len(df_actual[
         (df_actual["oa actual"] >= current_week_start) & 
         (df_actual["oa actual"] <= current_date)
     ])
     
-    # Calculate weekly performance
-    last_week_performance = (last_week_actual / last_week_forecast * 100) if last_week_forecast > 0 else 100
-    current_week_performance = (current_week_actual / current_week_forecast * 100) if current_week_forecast > 0 else 100
+    # Calculate next week's forecast
+    next_week_forecast = len(df_forecast[
+        (df_forecast["forecast oa date"] >= next_week_start) & 
+        (df_forecast["forecast oa date"] < next_week_end)
+    ])
     
-    # Format week dates for display
-    last_week_dates = f"{last_week_start.strftime('%d %b')} - {(current_week_start - pd.Timedelta(days=1)).strftime('%d %b')}"
-    current_week_dates = f"{current_week_start.strftime('%d %b')} - {current_date.strftime('%d %b')}"
+    # Calculate weekly performance with proper handling of zero cases
+    last_week_performance = (last_week_actual / last_week_forecast * 100) if last_week_forecast > 0 else (
+        100 if last_week_actual > 0 else 0  # 100% if we completed sites with no forecast, 0% if no activity
+    )
+    current_week_performance = (current_week_actual / current_week_forecast * 100) if current_week_forecast > 0 else (
+        100 if current_week_actual > 0 else 0  # 100% if we completed sites with no forecast, 0% if no activity
+    )
+    
+    # Format week dates for display with ISO week numbers
+    last_week_iso = last_week_start.isocalendar()
+    current_week_iso = current_week_start.isocalendar()
+    next_week_iso = next_week_start.isocalendar()
+    
+    last_week_dates = f"Week {last_week_iso[1]} ({last_week_start.strftime('%d %b')} - {(last_week_end - pd.Timedelta(days=1)).strftime('%d %b')})"
+    current_week_dates = f"Week {current_week_iso[1]} ({current_week_start.strftime('%d %b')} - {(current_week_end - pd.Timedelta(days=1)).strftime('%d %b')})"
+    next_week_dates = f"Week {next_week_iso[1]} ({next_week_start.strftime('%d %b')} - {(next_week_end - pd.Timedelta(days=1)).strftime('%d %b')})"
+
+    # Calculate completion trend and projected completion for next week
+    recent_weeks_avg = df_actual[
+        (df_actual["oa actual"] >= current_week_start - pd.Timedelta(weeks=4))
+    ].groupby(df_actual["oa actual"].dt.isocalendar().week).size().mean()
+    
+    projected_completion = int(round(recent_weeks_avg))
+    projected_performance = (projected_completion / next_week_forecast * 100) if next_week_forecast > 0 else (
+        100 if projected_completion > 0 else 0  # 100% if we project completions with no forecast, 0% if no activity
+    )
 
     summary_html = f"""
     <div class="summary-section">
@@ -768,6 +798,18 @@ def create_project_summary(df_forecast, df_actual):
                 <div>Completed: {current_week_actual:,} of {current_week_forecast:,} sites</div>
                 <div style="color: {'#28A745' if current_week_performance >= 100 else '#DC3545'}">
                     Progress: {current_week_performance:.1f}%
+                </div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-item-header">Next Week Plan</div>
+                <div>Period: {next_week_dates}</div>
+                <div>Target: {next_week_forecast:,} sites</div>
+                <div>Projected: {projected_completion:,} sites</div>
+                <div style="color: {'#28A745' if projected_performance >= 100 else '#DC3545'}">
+                    Projected Achievement: {projected_performance:.1f}%
+                </div>
+                <div style="font-size: 0.9em; color: #666; margin-top: 5px;">
+                    *Based on 4-week average performance
                 </div>
             </div>
         </div>
@@ -1824,8 +1866,19 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
                     story.append(Spacer(1, 20))
                 
                 if gap_summary is not None:
+                    # Add summary text
+                    pending_sites = df[df['oa actual'].isna()]
+                    total_pending = len(pending_sites)
+                    
+                    summary_text = Paragraph(
+                        f"Total number of pending sites: {total_pending:,}",
+                        styles['CustomNormal']
+                    )
+                    story.append(summary_text)
+                    story.append(Spacer(1, 12))
+                    
                     # Create summary table with improved styling
-                    gap_table = Table(gap_summary, colWidths=[200, 100, 150])
+                    gap_table = Table(gap_summary, colWidths=[200, 100, 100])
                     gap_table.setStyle(TableStyle([
                         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                         ('ALIGN', (1, 0), (2, -1), 'CENTER'),
@@ -1833,7 +1886,7 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
                         ('FONTSIZE', (0, 0), (-1, 0), 12),
                         ('FONTNAME', (0, 1), (-1, -1), font_family),
                         ('FONTSIZE', (0, 1), (-1, -1), 10),
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a237e')),
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2E5077')),
                         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                         ('GRID', (0, 0), (-1, -1), 1, colors.black),
                         ('ROWBACKGROUNDS', (0, 1), (-1, -1), ['#F0F0F0', 'white']),
@@ -1842,6 +1895,15 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
                     ]))
                     
                     story.append(gap_table)
+                    story.append(Spacer(1, 20))
+                    
+                    # Add explanation text
+                    explanation_text = Paragraph(
+                        "The above chart shows the distribution of pending sites by their implementation status. "
+                        "Each category represents a different stage or reason for pending implementation.",
+                        styles['CustomNormal']
+                    )
+                    story.append(explanation_text)
                     story.append(Spacer(1, 20))
         
         except Exception as e:
@@ -2236,107 +2298,120 @@ def create_gap_oa_analysis(df):
             st.error("GAP OA Analysis column not found in the data")
             return None, None
             
-        # Group by GAP OA Analysis categories
-        gap_analysis = pending_sites['gap oa analysis'].value_counts()
+        # Group by GAP OA Analysis categories and clean the data
+        gap_analysis = pending_sites['gap oa analysis'].fillna('Not Specified').value_counts()
         
-        # Calculate percentages
+        # Calculate total and percentages
         total_pending = len(pending_sites)
-        gap_analysis_pct = (gap_analysis / total_pending * 100).round(1)
-        
-        # Create a DataFrame for the visualization
         gap_df = pd.DataFrame({
             'Category': gap_analysis.index,
             'Count': gap_analysis.values,
-            'Percentage': gap_analysis_pct.values
+            'Percentage': (gap_analysis.values / total_pending * 100).round(1)
         })
         
-        # Sort by count in descending order for both chart and table
-        gap_df = gap_df.sort_values('Count', ascending=True)  # Keep ascending for horizontal bar chart
+        # Sort by count in descending order
+        gap_df = gap_df.sort_values('Count', ascending=False)
         
-        # Define deep, professional colors
-        deep_colors = [
-            '#1a237e',  # Deep Indigo
-            '#311b92',  # Deep Purple
-            '#004d40',  # Deep Teal
-            '#b71c1c',  # Deep Red
-            '#0d47a1',  # Deep Blue
-            '#1b5e20',  # Deep Green
-            '#e65100',  # Deep Orange
-            '#4a148c',  # Deep Purple
-            '#3e2723',  # Deep Brown
-            '#263238',  # Deep Blue Grey
+        # Create custom text for labels
+        custom_text = [f"{cat}<br>{count:,} ({pct:.1f}%)" 
+                      for cat, count, pct in zip(gap_df['Category'], 
+                                               gap_df['Count'], 
+                                               gap_df['Percentage'])]
+        
+        # Define professional color palette with brighter, more distinct colors
+        colors = [
+            '#2E5077',  # Deep Blue
+            '#00A878',  # Emerald Green
+            '#FF8C42',  # Bright Orange
+            '#E63946',  # Bright Red
+            '#9381FF',  # Bright Purple
+            '#F7B801',  # Golden Yellow
+            '#8AC926',  # Lime Green
+            '#48CAE4',  # Sky Blue
+            '#FF6B6B',  # Coral
+            '#4A4E69'   # Slate
         ]
         
         # Create figure
         fig = go.Figure()
         
-        # Add horizontal bar chart with solid deep colors
-        fig.add_trace(go.Bar(
-            y=gap_df['Category'],
-            x=gap_df['Count'],
-            orientation='h',
-            text=[f"{count:,} ({pct:.1f}%)" for count, pct in zip(gap_df['Count'], gap_df['Percentage'])],
-            textposition='outside',
-            marker=dict(
-                color=deep_colors[:len(gap_df)],
-                line=dict(width=1, color='rgba(255,255,255,0.2)')  # Subtle border
-            ),
-            hovertemplate=(
-                "<b>%{y}</b><br>" +
-                "Count: %{x:,}<br>" +
-                "Percentage: %{customdata:.1f}%<br>" +
-                "<extra></extra>"
-            ),
-            customdata=gap_df['Percentage']
-        ))
+        # Add enhanced pie chart with custom text
+        fig.add_trace(
+            go.Pie(
+                labels=gap_df['Category'],
+                values=gap_df['Count'],
+                text=custom_text,  # Use custom text for labels
+                hole=0.5,
+                marker=dict(
+                    colors=colors[:len(gap_df)],
+                    line=dict(color='white', width=3)
+                ),
+                textinfo='text',  # Use custom text instead of auto-generated
+                textposition='outside',
+                hovertemplate=(
+                    "<b>%{label}</b><br>" +
+                    "Count: %{value:,}<br>" +
+                    "Percentage: %{text}<br>" +
+                    "<extra></extra>"
+                ),
+                pull=[0.05 if i == 0 else 0.02 for i in range(len(gap_df))],
+                rotation=90
+            )
+        )
         
         # Update layout with improved styling
         fig.update_layout(
             title=dict(
                 text='Implementation GAP Analysis',
-                font=dict(size=24, color='#1a237e', family="Arial"),
+                font=dict(size=24, color='#2E5077', family="Arial"),
                 x=0.5,
                 xanchor="center",
                 y=0.95,
                 yanchor="top",
                 pad=dict(b=20)
             ),
-            height=max(500, len(gap_df) * 50),  # Increased height per category
-            margin=dict(l=20, r=120, t=100, b=20),  # Increased right margin for labels
+            height=700,
+            showlegend=True,
+            legend=dict(
+                orientation="v",
+                yanchor="middle",
+                y=0.5,
+                xanchor="left",
+                x=1.1,
+                font=dict(size=12, color='#2E5077'),
+                bordercolor='#E9ECEF',
+                borderwidth=1
+            ),
             plot_bgcolor='white',
             paper_bgcolor='white',
-            showlegend=False,
-            bargap=0.3,  # Increased gap between bars
-            xaxis=dict(
-                title=dict(
-                    text="Number of Pending Sites",
-                    font=dict(size=14, color='#1a237e')
+            margin=dict(l=20, r=120, t=100, b=20),
+            annotations=[
+                dict(
+                    text=f'Total Pending Sites: {total_pending:,}',
+                    xref='paper',
+                    yref='paper',
+                    x=0.5,
+                    y=1.02,
+                    showarrow=False,
+                    font=dict(size=16, color='#2E5077', family="Arial")
                 ),
-                showgrid=True,
-                gridcolor='rgba(26, 35, 126, 0.1)',  # Light indigo grid
-                gridwidth=1,
-                tickfont=dict(size=12, color='#1a237e'),
-                tickformat=",d",
-                zeroline=True,
-                zerolinecolor='rgba(26, 35, 126, 0.2)',
-                zerolinewidth=2
-            ),
-            yaxis=dict(
-                title=None,
-                showgrid=False,
-                tickfont=dict(size=12, color='#1a237e'),
-                ticksuffix="  "  # Add space after category names
-            )
+                dict(
+                    text=f'{len(gap_df)}<br>Categories',
+                    x=0.5,
+                    y=0.5,
+                    font=dict(size=20, color='#2E5077'),
+                    showarrow=False,
+                    xanchor='center',
+                    yanchor='middle'
+                )
+            ]
         )
         
-        # Sort data in descending order for the summary table
-        gap_df_sorted = gap_df.sort_values('Count', ascending=False)
-        
-        # Add summary table data
+        # Create summary table data
         summary_data = [
             ["Category", "Count", "Percentage"],
             *[[cat, f"{count:,}", f"{pct:.1f}%"] 
-              for cat, count, pct in zip(gap_df_sorted['Category'], gap_df_sorted['Count'], gap_df_sorted['Percentage'])]
+              for cat, count, pct in zip(gap_df['Category'], gap_df['Count'], gap_df['Percentage'])]
         ]
         
         return fig, summary_data
