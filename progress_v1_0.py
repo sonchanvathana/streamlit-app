@@ -1,102 +1,127 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
 import os
 import numpy as np
 import matplotlib.dates as mdates
 from datetime import datetime
 import matplotlib as mpl
 import re
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# Ensure Calibri is available and set as default
+mpl.rcParams['font.family'] = 'sans-serif'
+mpl.rcParams['font.sans-serif'] = ['Calibri', 'Arial']  # Fallback to Arial if Calibri not available
+
+# Set up Seaborn style with customizations
+sns.set_theme(style="whitegrid")
+sns.set_palette("deep")
+
+# Comprehensive style settings
+plt.rcParams.update({
+    # Font settings
+    'font.size': 10,
+    'axes.titlesize': 14,
+    'axes.labelsize': 11,
+    'xtick.labelsize': 9,
+    'ytick.labelsize': 9,
+    'legend.fontsize': 9,
+    
+    # Grid settings
+    'grid.alpha': 0.3,
+    'grid.color': '#CCCCCC',
+    'grid.linestyle': '--',
+    'grid.linewidth': 0.8,
+    
+    # Axis settings
+    'axes.spines.top': False,
+    'axes.spines.right': True,  # Keep for secondary axis
+    'axes.spines.left': True,
+    'axes.spines.bottom': True,
+    'axes.linewidth': 1.0,
+    'axes.grid': True,
+    
+    # Figure settings
+    'figure.facecolor': 'white',
+    'figure.figsize': (14, 8),
+    'figure.dpi': 100,
+    
+    # Export settings
+    'savefig.dpi': 300,
+    'savefig.bbox': 'tight',
+    'savefig.pad_inches': 0.2,
+    'savefig.facecolor': 'white'
+})
+
+# Custom color palette optimized for PowerPoint
+colors = {
+    'forecast': '#2C3E50',    # Dark blue-gray
+    'actual': '#27AE60',      # Forest green
+    'positive': '#2ECC71',    # Emerald
+    'negative': '#E74C3C',    # Soft red
+    'grid': '#CCCCCC',        # Medium gray for better visibility
+    'text': '#2C3E50'         # Dark blue-gray
+}
+
+# Update Seaborn palette
+sns.set_palette([colors['forecast'], colors['actual'], colors['positive'], colors['negative']])
 
 # Function to configure date axis with user-selected or smart formatting
 def configure_date_axis(ax, date_range, chart_width, user_interval=None):
     """Configure the date axis with smart formatting based on the date range or user selection"""
-    # Calculate the number of days in the range
     if len(date_range) == 0:
-        return  # No dates to format
+        return
         
     days_span = (date_range[-1] - date_range[0]).days + 1
     
-    # If user provided a specific interval, use it
     if user_interval is not None:
         interval = user_interval
-        # Use appropriate format based on interval
-        if interval >= 30:  # Monthly or longer
-            date_format = '%b-%y'
-        else:
-            date_format = '%d-%b'
-            
-        print(f"Using user-selected interval of {interval} days")
+        date_format = '%d-%b' if interval < 30 else '%b-%y'
     else:
-        # Calculate a dynamic interval based on chart width and date range
-        estimated_label_width = 30  # Pixels per date label
-        optimal_label_count = max(chart_width // estimated_label_width, 4)  # At least 4 labels
-        
-        # Calculate base interval but prioritize showing 1-2 day intervals
+        estimated_label_width = 40
+        optimal_label_count = max(chart_width // estimated_label_width, 4)
         base_interval = max(days_span // optimal_label_count, 1)
         
-        # Force 1 day for short ranges, 2 days for medium ranges when possible
-        if days_span <= 14:  # Two weeks or less - always show daily
-            interval = 1
-            date_format = '%d-%b'
-        elif days_span <= 30:  # One month - always use 2 days max
+        if days_span <= 14:
             interval = 2
             date_format = '%d-%b'
-        elif days_span <= 60:  # Two months
-            interval = min(2, base_interval)  # Try to use 2 days if possible
+        elif days_span <= 30:
+            interval = 3
             date_format = '%d-%b'
-        elif days_span <= 90:  # Three months
-            interval = min(2, base_interval)  # Try to use 2 days if possible
+        elif days_span <= 90:
+            interval = 7
             date_format = '%d-%b'
-        elif days_span <= 180:  # Six months
-            # For medium ranges, try to keep 2 day intervals if the chart can fit them
-            if base_interval <= 3:
-                interval = 2  # Force 2 day intervals if not too crowded
-            else:
-                interval = min(5, base_interval)  # Otherwise allow up to 5 days
+        elif days_span <= 180:
+            interval = 14
             date_format = '%d-%b'
-        elif days_span <= 365:  # One year
-            # For longer ranges, we need more flexibility but still try to keep intervals small
-            interval = min(7, base_interval)  # Allow up to weekly intervals
-            date_format = '%d-%b'
-        elif days_span <= 730:  # Two years
-            interval = min(15, base_interval)  # Allow up to half-monthly
-            date_format = '%d-%b-%y'
+        elif days_span <= 365:
+            interval = 30
+            date_format = '%b-%y'
         else:
-            # For very long ranges, we need to be practical
-            interval = min(30, base_interval)  # Allow up to monthly intervals
+            interval = 60
             date_format = '%b-%y'
     
-    # For longer periods, use month-based locators instead of day-based
     if days_span > 365 and user_interval is None:
-        if days_span > 730:  # > 2 years
-            ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))  # Every month
-        else:
-            ax.xaxis.set_major_locator(mdates.MonthLocator())  # Every month
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
     else:
-        # For day locators, use the calculated or user-selected interval
         ax.xaxis.set_major_locator(mdates.DayLocator(interval=interval))
     
-    # Set the date format
     ax.xaxis.set_major_formatter(mdates.DateFormatter(date_format))
-
-    # Add minor ticks for better visual reference (every day)
-    if days_span <= 180:
-        ax.xaxis.set_minor_locator(mdates.DayLocator())
-        ax.grid(axis='x', which='minor', linestyle=':', alpha=0.2)
     
-    # Configure label appearance based on density
-    if days_span <= 60:
-        # For dense labels, use vertical orientation
-        ax.tick_params(axis='x', rotation=90, labelsize=9, pad=5)
-    elif days_span <= 180:
-        # For medium density, use 45-degree angle
-        ax.tick_params(axis='x', rotation=45, labelsize=9, pad=3)
+    # Enhanced grid
+    ax.grid(axis='x', which='major', linestyle='--', alpha=0.3, color=colors['grid'], linewidth=0.8)
+    ax.grid(axis='y', which='major', linestyle='--', alpha=0.3, color=colors['grid'], linewidth=0.8)
+    
+    # Optimize label rotation
+    if days_span <= 90:
+        ax.tick_params(axis='x', rotation=45, labelsize=9, pad=5)
     else:
-        # For sparser labels, still use some angle for better readability
         ax.tick_params(axis='x', rotation=30, labelsize=9, pad=3)
-    
-    # Add a debug log to show the interval being used
-    print(f"Date axis configuration: {days_span} days span, using interval of {interval} days")
+
+    # Ensure all text uses Calibri
+    for label in ax.get_xticklabels() + ax.get_yticklabels():
+        label.set_fontname('Calibri')
 
 # Function to create daily progress chart
 def create_daily_progress_chart(df_forecast, df_actual, selected_sheet, script_dir, date_interval=None):
@@ -173,7 +198,7 @@ def create_daily_progress_chart(df_forecast, df_actual, selected_sheet, script_d
         status_color = "#1f77b4"
 
     # Set up the figure with an elegant, minimalist style for executive presentation
-    fig, ax1 = plt.subplots(figsize=(14, 8), facecolor='white')
+    fig, ax1 = plt.subplots(figsize=(14, 8))
     fig.patch.set_facecolor('white')
 
     # Use refined, professional colors suitable for executive presentations
@@ -511,25 +536,36 @@ def create_daily_progress_chart(df_forecast, df_actual, selected_sheet, script_d
     plt.tight_layout()
     fig.subplots_adjust(bottom=0.08, right=0.95)  # Adjust margins for new elements
 
-    # Save the plot with high DPI for better quality in PowerPoint
+    # Save the plot with PowerPoint-optimized settings
     output_dir = os.path.join(script_dir, "output")
     os.makedirs(output_dir, exist_ok=True)
-
-    # Sanitize sheet name for use in filename
     safe_sheet_name = re.sub(r'[\\/*?:"<>|]', "_", selected_sheet)
 
-    # Save for executive presentation - with sheet name in the filename
-    interval_info = f"_{date_interval}day" if date_interval else ""
-    comparison_plot_path_png = os.path.join(output_dir, f"Cellcard_Daily_Progress_CTO_{safe_sheet_name}{interval_info}.png")
-    plt.savefig(comparison_plot_path_png, dpi=300, bbox_inches='tight', facecolor='white')
-    print(f"Saved high-quality daily plot for sheet '{selected_sheet}': {comparison_plot_path_png}")
+    # Save PNG with high DPI for PowerPoint
+    comparison_plot_path_png = os.path.join(output_dir, f"CTO_Daily_Progress_{safe_sheet_name}.png")
+    plt.savefig(comparison_plot_path_png, 
+                dpi=300,  # High DPI for sharp display
+                bbox_inches='tight',
+                facecolor='white',
+                edgecolor='none',
+                pad_inches=0.1,  # Slight padding
+                format='png',
+                transparent=False)  # Solid white background for PowerPoint
 
-    # Save the data to CSV for reference
-    csv_path = os.path.join(output_dir, f"Cellcard_Daily_Progress_Data_{safe_sheet_name}.csv")
-    comparison_df.to_csv(csv_path)
-    print(f"Saved daily data for sheet '{selected_sheet}' to: {csv_path}")
+    # Save SVG for vector graphics
+    comparison_plot_path_svg = os.path.join(output_dir, f"CTO_Daily_Progress_{safe_sheet_name}.svg")
+    plt.savefig(comparison_plot_path_svg,
+                bbox_inches='tight',
+                facecolor='white',
+                edgecolor='none',
+                pad_inches=0.1,
+                format='svg')
 
-    plt.close()  # Close the figure to free memory
+    print(f"Saved PowerPoint-ready plots:")
+    print(f"PNG (high-res): {comparison_plot_path_png}")
+    print(f"SVG (vector): {comparison_plot_path_svg}")
+
+    plt.close()
     
     return comparison_df  # Return the data for potential further analysis
 
@@ -603,7 +639,7 @@ def create_weekly_progress_chart(df_forecast, df_actual, selected_sheet, script_
         status_color = "#1f77b4"
 
     # Set up the figure with an elegant, minimalist style for executive presentation
-    fig, ax1 = plt.subplots(figsize=(12, 8), facecolor='white')
+    fig, ax1 = plt.subplots(figsize=(12, 8))
     fig.patch.set_facecolor('white')
 
     # Use refined, professional colors suitable for executive presentations
@@ -861,163 +897,262 @@ def create_weekly_progress_chart(df_forecast, df_actual, selected_sheet, script_
     plt.tight_layout()
     fig.subplots_adjust(bottom=0.08, right=0.95)  # Adjust margins for new elements
 
-    # Save the plot with high DPI for better quality in PowerPoint
+    # Save the plot with PowerPoint-optimized settings
     output_dir = os.path.join(script_dir, "output")
     os.makedirs(output_dir, exist_ok=True)
-
-    # Sanitize sheet name for use in filename
     safe_sheet_name = re.sub(r'[\\/*?:"<>|]', "_", selected_sheet)
 
-    # Save for executive presentation with sheet name in the filename
-    comparison_plot_path_png = os.path.join(output_dir, f"Cellcard_Weekly_Progress_CTO_{safe_sheet_name}.png")
-    plt.savefig(comparison_plot_path_png, dpi=300, bbox_inches='tight', facecolor='white')
-    print(f"Saved high-quality weekly plot for sheet '{selected_sheet}': {comparison_plot_path_png}")
+    # Save PNG with high DPI for PowerPoint
+    comparison_plot_path_png = os.path.join(output_dir, f"CTO_Weekly_Progress_{safe_sheet_name}.png")
+    plt.savefig(comparison_plot_path_png,
+                dpi=300,
+                bbox_inches='tight',
+                facecolor='white',
+                edgecolor='none',
+                pad_inches=0.1,
+                format='png',
+                transparent=False)
 
-    # Save the data to CSV for reference
-    csv_path = os.path.join(output_dir, f"Cellcard_Weekly_Progress_Data_{safe_sheet_name}.csv")
-    comparison_weekly.to_csv(csv_path)
-    print(f"Saved weekly data for sheet '{selected_sheet}' to: {csv_path}")
+    # Save SVG for vector graphics
+    comparison_plot_path_svg = os.path.join(output_dir, f"CTO_Weekly_Progress_{safe_sheet_name}.svg")
+    plt.savefig(comparison_plot_path_svg,
+                bbox_inches='tight',
+                facecolor='white',
+                edgecolor='none',
+                pad_inches=0.1,
+                format='svg')
 
-    plt.close()  # Close the figure to free memory
+    print(f"Saved PowerPoint-ready plots:")
+    print(f"PNG (high-res): {comparison_plot_path_png}")
+    print(f"SVG (vector): {comparison_plot_path_svg}")
+
+    plt.close()
     
     return comparison_weekly  # Return the data for potential further analysis
 
 # Function to create gap analysis chart
 def create_gap_analysis_chart(df_forecast, df_actual, selected_sheet, script_dir):
-    print(f"Generating Gap Analysis Chart for '{selected_sheet}'...")
-    
-    # Set global font to Calibri
-    plt.rcParams['font.family'] = 'Calibri'
-    plt.rcParams['font.size'] = 10
-    
-    # Identify pending sites (no OA Actual) and their gap analysis
-    pending_sites = df_forecast[df_forecast['oa actual'].isna()].copy()
-    
-    if len(pending_sites) == 0:
-        print(f"No pending sites for gap analysis in sheet '{selected_sheet}'")
+    if len(df_forecast[df_forecast['oa actual'].isna()]) == 0:
         return
+
+    # Create figure with clean design
+    fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Process GAP OA Analysis for pending sites
-    gap_categories = pending_sites['gap oa analysis'].value_counts()
+    # Use consistent color scheme
+    colors = ['#2C3E50', '#27AE60', '#E74C3C', '#F39C12', '#8E44AD'][:5]
     
-    # Create figure with professional styling
-    plt.style.use('seaborn-v0_8-whitegrid')
-    fig = plt.figure(figsize=(15, 8))
-    fig.patch.set_facecolor('white')
+    # Calculate gap analysis
+    gap_data = df_forecast[df_forecast['oa actual'].isna()]['gap oa analysis'].value_counts()
     
-    # Create grid layout
-    gs = fig.add_gridspec(2, 2, height_ratios=[0.15, 1], width_ratios=[1.2, 1])
+    # Create simplified pie chart
+    wedges, texts, autotexts = ax.pie(gap_data,
+                                     colors=colors,
+                                     autopct='%1.1f%%',
+                                     pctdistance=0.85,
+                                     startangle=90)
     
-    # Add main title spanning both columns
-    title_ax = fig.add_subplot(gs[0, :])
-    title_ax.axis('off')
+    # Clean up labels
+    plt.setp(autotexts, size=9, weight="bold", color="white")
+    plt.setp(texts, size=9)
     
-    # Project name in large, bold font
-    title_ax.text(0.5, 0.7, f'{selected_sheet}',
-                 ha='center', va='bottom', fontsize=16, fontweight='bold', 
-                 fontname='Calibri')
-    # Subtitle in smaller font
-    title_ax.text(0.5, 0.3, 'Implementation Gap Analysis Dashboard',
-                 ha='center', va='top', fontsize=14, fontweight='normal',
-                 fontname='Calibri')
+    # Add minimal title
+    plt.title(f"{selected_sheet}\nImplementation Gap Analysis",
+             pad=20,
+             fontsize=14,
+             color='#2C3E50')
     
-    # Color scheme for professional presentation
-    colors = ['#2c6b9c', '#37a794', '#e94f3d', '#f39c12', '#8e44ad', '#c0392b', 
-              '#27ae60', '#2980b9', '#c0392b', '#7f8c8d']  # Extended corporate colors
+    # Add clean legend
+    legend = plt.legend(gap_data.index,
+                       title="Gap Categories",
+                       loc="center left",
+                       bbox_to_anchor=(1, 0, 0.5, 1))
     
-    # Left subplot: Gap Category Distribution (Pie Chart)
-    ax1 = fig.add_subplot(gs[1, 0])
-    if not gap_categories.empty:
-        # Calculate percentages for labels
-        total_pending = gap_categories.sum()
-        gap_percentages = gap_categories / total_pending * 100
-        
-        # Create labels with both count and percentage
-        labels = [f'{cat}\n({count:,} sites)\n{pct:.1f}%' 
-                 for cat, count, pct in zip(gap_categories.index, gap_categories.values, gap_percentages)]
-        
-        # Create pie chart with a slight explode effect
-        explode = [0.05] * len(gap_categories)  # Slight separation for all slices
-        wedges, texts, autotexts = ax1.pie(gap_categories.values,
-                                          explode=explode,
-                                          labels=labels,
-                                          colors=colors[:len(gap_categories)],
-                                          autopct='',  # We already have percentages in labels
-                                          startangle=90,
-                                          pctdistance=0.85)
-        
-        # Enhance pie chart appearance
-        plt.setp(texts, size=11, fontname='Calibri')
-        ax1.set_title('Gap Analysis Distribution', pad=20, fontsize=13, 
-                     fontweight='bold', fontname='Calibri')
-    else:
-        ax1.text(0.5, 0.5, 'No gap analysis data available',
-                ha='center', va='center', fontsize=12, fontname='Calibri')
-    
-    # Right subplot: Summary Metrics
-    ax2 = fig.add_subplot(gs[1, 1])
-    ax2.axis('off')
-    
-    # Calculate summary metrics
-    total_sites = len(df_forecast)
-    total_completed = len(df_actual)
-    total_pending = len(pending_sites)
-    completion_rate = (total_completed / total_sites * 100) if total_sites > 0 else 0
-    
-    # Create summary text with better formatting and spacing
-    summary_text = [
-        "Implementation Status Summary",
-        "-" * 35,  # Using standard dash instead of unicode separator
-        f"Total Sites: {total_sites:,}",
-        f"Completed: {total_completed:,} ({completion_rate:.1f}%)",
-        f"Pending: {total_pending:,} ({100-completion_rate:.1f}%)",
-        "",
-        "Gap Category Breakdown",
-        "-" * 35  # Using standard dash instead of unicode separator
-    ]
-    
-    # Add percentage for each category with improved formatting
-    for category, count in gap_categories.items():
-        percentage = (count / total_pending * 100)
-        summary_text.append(f"• {category}:")
-        summary_text.append(f"  {count:,} sites ({percentage:.1f}%)")
-        summary_text.append("")  # Add extra spacing between categories
-    
-    # Add text box with analysis - aligned to the left
-    props = dict(boxstyle='round,pad=1.5', facecolor='white', alpha=0.95, 
-                edgecolor='#2c6b9c', linewidth=2)
-    ax2.text(0.02, 0.98, '\n'.join(summary_text),
-            ha='left', va='top', 
-            fontsize=11,  # Increased font size
-            fontname='Calibri',
-            linespacing=1.3,  # Increased line spacing
-            bbox=props,
-            transform=ax2.transAxes)
-    
-    # Add footer with report generation date
-    fig.text(0.99, 0.02, f'Report generated: {datetime.now().strftime("%Y-%m-%d")}',
-             fontsize=9, fontname='Calibri', color='#666666', ha='right')
-    
-    # Add data source reference
-    fig.text(0.01, 0.02, "Data Source: Project Implementation Tracking System",
-             fontsize=9, fontname='Calibri', color='#666666', ha='left')
-    
-    # Adjust layout
-    plt.tight_layout()
-    
-    # Save the plot
+    # Save with PowerPoint-optimized settings
     output_dir = os.path.join(script_dir, "output")
     os.makedirs(output_dir, exist_ok=True)
+    safe_sheet_name = re.sub(r'[\\/*?:"<>|]', "_", selected_sheet)
+
+    # Save PNG with high DPI for PowerPoint
+    gap_analysis_path_png = os.path.join(output_dir, f"CTO_Gap_Analysis_{safe_sheet_name}.png")
+    plt.savefig(gap_analysis_path_png,
+                dpi=300,
+                bbox_inches='tight',
+                facecolor='white',
+                edgecolor='none',
+                pad_inches=0.1,
+                format='png',
+                transparent=False)
+
+    # Save SVG for vector graphics
+    gap_analysis_path_svg = os.path.join(output_dir, f"CTO_Gap_Analysis_{safe_sheet_name}.svg")
+    plt.savefig(gap_analysis_path_svg,
+                bbox_inches='tight',
+                facecolor='white',
+                edgecolor='none',
+                pad_inches=0.1,
+                format='svg')
+
+    print(f"Saved PowerPoint-ready plots:")
+    print(f"PNG (high-res): {gap_analysis_path_png}")
+    print(f"SVG (vector): {gap_analysis_path_svg}")
+
+    plt.close()
+
+# Example of how the daily progress chart would look with Plotly
+def create_daily_progress_chart_plotly(df_forecast, df_actual, selected_sheet, script_dir, date_interval=None):
+    # Process data same as before
+    forecast_counts = df_forecast["forecast oa date"].value_counts().sort_index()
+    actual_counts = df_actual["oa actual"].value_counts().sort_index() if not df_actual.empty else pd.Series(dtype='float64')
+
+    all_dates = pd.date_range(
+        start=min(forecast_counts.index.min(),
+                actual_counts.index.min() if not actual_counts.empty else forecast_counts.index.min()),
+        end=max(forecast_counts.index.max(),
+                actual_counts.index.max() if not actual_counts.empty else forecast_counts.index.max()),
+        freq='D'
+    )
+
+    # Create DataFrames
+    forecast_df = pd.DataFrame(index=all_dates)
+    forecast_df["Forecast Count"] = forecast_counts.reindex(all_dates, fill_value=0)
+    forecast_df["Cumulative Forecast"] = forecast_df["Forecast Count"].cumsum()
     
-    # Sanitize sheet name for use in filename
+    if not df_actual.empty:
+        actual_df = pd.DataFrame(index=all_dates)
+        actual_df["Actual Count"] = actual_counts.reindex(all_dates, fill_value=0)
+        actual_df["Cumulative Actual"] = actual_df["Actual Count"].cumsum()
+    else:
+        actual_df = pd.DataFrame(index=all_dates)
+        actual_df["Actual Count"] = 0
+        actual_df["Cumulative Actual"] = 0
+
+    # Calculate stats
+    total_forecasted = len(df_forecast)
+    total_completed = len(df_actual)
+    completion_percentage = (total_completed / total_forecasted * 100) if total_forecasted > 0 else 0
+
+    # Create Plotly figure
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    # Add forecast line
+    fig.add_trace(
+        go.Scatter(
+            x=forecast_df.index,
+            y=forecast_df["Cumulative Forecast"],
+            name=f"Forecast ({total_forecasted:,} sites)",
+            line=dict(color='#2C3E50', width=2),
+            mode='lines+markers',
+            marker=dict(size=8, symbol='circle', line=dict(color='#2C3E50', width=2)),
+        ),
+        secondary_y=False
+    )
+
+    # Add actual line if data exists
+    if not df_actual.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=actual_df.index,
+                y=actual_df["Cumulative Actual"],
+                name=f"Actual ({total_completed:,} sites, {completion_percentage:.1f}%)",
+                line=dict(color='#27AE60', width=2),
+                mode='lines+markers',
+                marker=dict(size=8, symbol='square', line=dict(color='#27AE60', width=2)),
+            ),
+            secondary_y=False
+        )
+
+    # Add gap bars
+    if not df_actual.empty:
+        gap_df = actual_df.copy()
+        gap_df["Cumulative Gap"] = actual_df["Cumulative Actual"] - forecast_df["Cumulative Forecast"]
+        
+        colors = ['#2ECC71' if x >= 0 else '#E74C3C' for x in gap_df["Cumulative Gap"]]
+        
+        fig.add_trace(
+            go.Bar(
+                x=gap_df.index,
+                y=gap_df["Cumulative Gap"],
+                name="Implementation Gap",
+                marker_color=colors,
+                opacity=0.3
+            ),
+            secondary_y=True
+        )
+
+    # Update layout for clean, modern look
+    fig.update_layout(
+        title={
+            'text': f"{selected_sheet}<br>Implementation Progress",
+            'y':0.95,
+            'x':0.5,
+            'xanchor': 'center',
+            'yanchor': 'top',
+            'font': dict(size=24, color='#2C3E50')
+        },
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        font=dict(family="Calibri", size=12, color='#2C3E50'),
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01,
+            bgcolor='rgba(255, 255, 255, 0.9)',
+            bordercolor='#E0E0E0'
+        ),
+        hovermode='x unified',
+        margin=dict(t=100, l=50, r=50, b=50)
+    )
+
+    # Update axes
+    fig.update_xaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='#E0E0E0',
+        zeroline=False,
+        title_text="Date"
+    )
+
+    fig.update_yaxes(
+        title_text="Cumulative Site Count",
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='#E0E0E0',
+        zeroline=False,
+        secondary_y=False
+    )
+
+    fig.update_yaxes(
+        title_text="Implementation Gap",
+        showgrid=False,
+        secondary_y=True
+    )
+
+    # Add today's reference line
+    today = pd.Timestamp.now().normalize()
+    if today >= all_dates.min() and today <= all_dates.max():
+        fig.add_vline(
+            x=today,
+            line_dash="dash",
+            line_color="#666666",
+            opacity=0.5,
+            annotation_text="Today",
+            annotation_position="top"
+        )
+
+    # Save both interactive and static versions
+    output_dir = os.path.join(script_dir, "output")
+    os.makedirs(output_dir, exist_ok=True)
     safe_sheet_name = re.sub(r'[\\/*?:"<>|]', "_", selected_sheet)
     
-    # Save with high DPI for better quality
-    gap_analysis_path = os.path.join(output_dir, f"Cellcard_Gap_Analysis_CTO_{safe_sheet_name}.png")
-    plt.savefig(gap_analysis_path, dpi=300, bbox_inches='tight', facecolor='white')
-    print(f"Saved gap analysis chart: {gap_analysis_path}")
+    # Save interactive HTML
+    fig.write_html(os.path.join(output_dir, f"CTO_Daily_Progress_{safe_sheet_name}.html"))
     
-    plt.close()
+    # Save static image
+    fig.write_image(os.path.join(output_dir, f"CTO_Daily_Progress_{safe_sheet_name}.png"), 
+                    width=1400, height=800, scale=2)
+
+    return fig
 
 # Process a single sheet
 def process_sheet(file_path, sheet_name, script_dir, date_interval=None):
@@ -1084,19 +1219,6 @@ def process_sheet(file_path, sheet_name, script_dir, date_interval=None):
     except Exception as e:
         print(f"Error processing sheet '{sheet_name}': {e}")
         return False
-
-# Set professional font and style for executive presentation
-plt.rcParams['font.family'] = 'Calibri'
-plt.rcParams['font.size'] = 10
-plt.rcParams['axes.linewidth'] = 0.8
-plt.rcParams['axes.edgecolor'] = '#777777'
-plt.rcParams['axes.spines.top'] = False
-plt.rcParams['axes.spines.right'] = True  # Needed for secondary axis
-plt.rcParams['axes.spines.bottom'] = True
-plt.rcParams['axes.spines.left'] = True
-plt.rcParams['xtick.major.size'] = 0
-plt.rcParams['ytick.major.size'] = 0
-plt.rcParams['axes.grid'] = False
 
 # Define the script directory
 script_dir = os.path.dirname(os.path.abspath(__file__))
