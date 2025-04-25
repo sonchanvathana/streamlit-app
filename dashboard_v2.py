@@ -1471,7 +1471,7 @@ def convert_plotly_to_image(fig):
         st.error(f"Error converting chart to image: {str(e)}")
         return None
 
-def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
+def generate_simple_pdf_report(df, provinces_gdf, selected_sheet, milestone_summary=None):
     """Generate a comprehensive PDF report with all dashboard metrics"""
     try:
         st.write("Debug: Starting PDF generation...")
@@ -1909,6 +1909,51 @@ def generate_simple_pdf_report(df, provinces_gdf, selected_sheet):
         except Exception as e:
             st.error(f"Error adding GAP Analysis to report: {str(e)}")
 
+        # 6. Cluster Milestone Summary
+        if milestone_summary is not None and not milestone_summary.empty:
+            story.append(Paragraph("6. Cluster Milestone Summary", styles['CustomHeading1']))
+            story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
+            story.append(Spacer(1, 12))
+
+            # Add explanatory text
+            story.append(Paragraph(
+                "Summary of cluster implementation status based on current progress:",
+                styles['CustomNormal']
+            ))
+            story.append(Spacer(1, 6))
+
+            # Prepare table data
+            ms_table_data = [["Status", "Clusters", "Total Sites", "Completed", "Completion Rate"]]
+            for _, row in milestone_summary.iterrows():
+                ms_table_data.append([
+                    row['Status'],
+                    f"{row['Clusters']:,}",
+                    f"{row['Total Sites']:,}",
+                    f"{row['Completed']:,}",
+                    f"{row['Completion Rate']:.1f}%"
+                ])
+
+            # Create and style table
+            ms_table = Table(ms_table_data, colWidths=[80, 80, 80, 80, 100])
+            # Get font names safely
+            font_family = 'Arial' if fonts_registered else 'Helvetica'
+            font_family_bold = 'Arial-Bold' if fonts_registered else 'Helvetica-Bold'
+            ms_table.setStyle(TableStyle([
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), font_family_bold), # Use defined font
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('FONTNAME', (0, 1), (-1, -1), font_family), # Use defined font
+                ('FONTSIZE', (0, 1), (-1, -1), 10),
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2E5077')), # Match theme
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), ['#F0F0F0', 'white']), # Alternating rows
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+
+            story.append(ms_table)
+            story.append(Spacer(1, 20))
+
         # Build PDF
         try:
             doc.build(story)
@@ -2293,14 +2338,14 @@ def create_gap_oa_analysis(df):
     try:
         # Filter for pending sites (sites without OA actual date)
         pending_sites = df[df['oa actual'].isna()].copy()
-        
+
         if 'gap oa analysis' not in pending_sites.columns:
             st.error("GAP OA Analysis column not found in the data")
-            return None, None
-            
+            return None, None, None # Return three Nones now
+
         # Group by GAP OA Analysis categories and clean the data
         gap_analysis = pending_sites['gap oa analysis'].fillna('Not Specified').value_counts()
-        
+
         # Calculate total and percentages
         total_pending = len(pending_sites)
         gap_df = pd.DataFrame({
@@ -2308,117 +2353,139 @@ def create_gap_oa_analysis(df):
             'Count': gap_analysis.values,
             'Percentage': (gap_analysis.values / total_pending * 100).round(1)
         })
-        
+
         # Sort by count in descending order
         gap_df = gap_df.sort_values('Count', ascending=False)
-        
+
+        # --- Pie Chart Generation (Existing Code) ---
         # Create custom text for labels
-        custom_text = [f"{cat}<br>{count:,} ({pct:.1f}%)" 
-                      for cat, count, pct in zip(gap_df['Category'], 
-                                               gap_df['Count'], 
+        custom_text = [f"{cat}<br>{count:,} ({pct:.1f}%)"
+                      for cat, count, pct in zip(gap_df['Category'],
+                                               gap_df['Count'],
                                                gap_df['Percentage'])]
-        
-        # Define professional color palette with brighter, more distinct colors
-        colors = [
-            '#2E5077',  # Deep Blue
-            '#00A878',  # Emerald Green
-            '#FF8C42',  # Bright Orange
-            '#E63946',  # Bright Red
-            '#9381FF',  # Bright Purple
-            '#F7B801',  # Golden Yellow
-            '#8AC926',  # Lime Green
-            '#48CAE4',  # Sky Blue
-            '#FF6B6B',  # Coral
-            '#4A4E69'   # Slate
+
+        # Define deeper professional color palette
+        deep_colors = [
+            '#0a62a9',  # Darker Blue
+            '#007a4d',  # Darker Green
+            '#e65100',  # Darker Orange
+            '#b71c1c',  # Darker Red
+            '#512da8',  # Darker Purple
+            '#f57f17',  # Darker Yellow
+            '#558b2f',  # Darker Lime Green
+            '#0277bd',  # Darker Sky Blue
+            '#d84315',  # Darker Coral
+            '#37474f'   # Darker Slate
         ]
-        
-        # Create figure
-        fig = go.Figure()
-        
+
+        # Create pie figure
+        pie_fig = go.Figure()
+
         # Add enhanced pie chart with custom text
-        fig.add_trace(
+        pie_fig.add_trace(
             go.Pie(
                 labels=gap_df['Category'],
                 values=gap_df['Count'],
-                text=custom_text,  # Use custom text for labels
+                # text=custom_text, # Keep default hover text for pie
                 hole=0.5,
                 marker=dict(
-                    colors=colors[:len(gap_df)],
-                    line=dict(color='white', width=3)
+                    colors=deep_colors[:len(gap_df)], # Use deeper colors
+                    line=dict(color='white', width=2) # Slightly thinner line
                 ),
-                textinfo='text',  # Use custom text instead of auto-generated
-                textposition='outside',
+                textinfo='percent+label', # Show percent and label on slices
+                textposition='outside', # Move labels outside
+                # insidetextorientation='radial', # Not needed for outside labels
+                textfont=dict( # Enhance label clarity
+                    size=11, # Slightly larger font
+                    color='#2F2F2F' # Dark text for outside labels
+                ),
                 hovertemplate=(
                     "<b>%{label}</b><br>" +
                     "Count: %{value:,}<br>" +
-                    "Percentage: %{text}<br>" +
+                    "Percentage: %{percent:.1%}<br>" +
                     "<extra></extra>"
                 ),
                 pull=[0.05 if i == 0 else 0.02 for i in range(len(gap_df))],
                 rotation=90
             )
         )
-        
-        # Update layout with improved styling
-        fig.update_layout(
+
+        # Update pie layout with improved styling
+        pie_fig.update_layout(
             title=dict(
-                text='Implementation GAP Analysis',
-                font=dict(size=24, color='#2E5077', family="Arial"),
+                text='GAP Analysis Distribution', # Removed (Pie) from title
+                font=dict(size=20, color='#2E5077', family="Arial"), # Slightly smaller title
                 x=0.5,
                 xanchor="center",
                 y=0.95,
                 yanchor="top",
                 pad=dict(b=20)
             ),
-            height=700,
-            showlegend=True,
-            legend=dict(
-                orientation="v",
-                yanchor="middle",
-                y=0.5,
-                xanchor="left",
-                x=1.1,
-                font=dict(size=12, color='#2E5077'),
-                bordercolor='#E9ECEF',
-                borderwidth=1
-            ),
+            height=500, # Adjusted height
+            showlegend=False, # Legend less useful with labels on slices
             plot_bgcolor='white',
             paper_bgcolor='white',
-            margin=dict(l=20, r=120, t=100, b=20),
+            margin=dict(l=40, r=40, t=100, b=40), # Increase top/bottom margin for outside labels
             annotations=[
-                dict(
-                    text=f'Total Pending Sites: {total_pending:,}',
-                    xref='paper',
-                    yref='paper',
-                    x=0.5,
-                    y=1.02,
-                    showarrow=False,
-                    font=dict(size=16, color='#2E5077', family="Arial")
-                ),
                 dict(
                     text=f'{len(gap_df)}<br>Categories',
                     x=0.5,
                     y=0.5,
-                    font=dict(size=20, color='#2E5077'),
+                    font=dict(size=16, color='#2E5077'), # Smaller center text
                     showarrow=False,
                     xanchor='center',
                     yanchor='middle'
                 )
             ]
         )
-        
+
+        # --- Sunburst Chart Generation (Removed Code) ---
+        # sunburst_fig = go.Figure()
+        #
+        # sunburst_fig.add_trace(go.Sunburst(
+        #     labels=["GAP Analysis"] + gap_df['Category'].tolist(),
+        #     parents=[""] + ["GAP Analysis"] * len(gap_df),
+        #     values=[total_pending] + gap_df['Count'].tolist(),
+        #     branchvalues="total", # Values sum up to parent
+        #     marker=dict(
+        #         colors=["#FFFFFF"] + colors[:len(gap_df)], # Center white, then category colors
+        #         line=dict(color='#666', width=1)
+        #     ),
+        #     hovertemplate='<b>%{label}</b><br>Count: %{value:,}<br>Percentage of Total Pending: %{percentRoot:.1%}<extra></extra>',
+        #     textinfo='label+percent root', # Show label and percentage of total
+        #     insidetextorientation='radial',
+        #     maxdepth=2 # Show center and first level
+        # ))
+        #
+        # sunburst_fig.update_layout(
+        #     title=dict(
+        #         text='GAP Analysis Hierarchy (Sunburst)',
+        #         font=dict(size=20, color='#2E5077', family="Arial"), # Match pie title size
+        #         x=0.5,
+        #         xanchor="center",
+        #         y=0.95,
+        #         yanchor="top",
+        #         pad=dict(b=20)
+        #     ),
+        #     height=500, # Match pie height
+        #     margin=dict(l=20, r=20, t=80, b=20), # Match pie margins
+        #     paper_bgcolor='white',
+        #     plot_bgcolor='white'
+        # )
+
+
         # Create summary table data
         summary_data = [
             ["Category", "Count", "Percentage"],
-            *[[cat, f"{count:,}", f"{pct:.1f}%"] 
+            *[[cat, f"{count:,}", f"{pct:.1f}%"]
               for cat, count, pct in zip(gap_df['Category'], gap_df['Count'], gap_df['Percentage'])]
         ]
-        
-        return fig, summary_data
-        
+
+        return pie_fig, summary_data # Return only pie figure and summary
+
     except Exception as e:
         st.error(f"Error creating GAP OA Analysis visualization: {str(e)}")
-        return None, None
+        return None, None # Return two Nones
 
 # Define status colors and symbols for milestone analysis
 STATUS_COLORS = {
@@ -2892,15 +2959,19 @@ def main():
 
         with tab6:
             st.subheader("Implementation GAP Analysis")
-            
-            gap_fig, gap_summary = create_gap_oa_analysis(df)
-            if gap_fig is not None:
-                # Create two columns for the visualization and metrics
-                col1, col2 = st.columns([2, 1])
-                
+
+            # Call the updated function to get only pie figure and summary
+            pie_fig, gap_summary = create_gap_oa_analysis(df)
+
+            # Check if figures were generated successfully
+            if pie_fig is not None:
+                # Create two columns for the visualizations and metrics
+                col1, col2 = st.columns([2, 1]) # Keep ratio for charts and metrics
+
                 with col1:
-                    st.plotly_chart(gap_fig, use_container_width=True)
-                
+                    # Display only the pie chart directly
+                    st.plotly_chart(pie_fig, use_container_width=True)
+
                 with col2:
                     if gap_summary is not None:
                         # Add summary metrics with improved styling
@@ -2931,10 +3002,10 @@ def main():
                             }
                             </style>
                         """, unsafe_allow_html=True)
-                        
+
                         # Calculate total pending sites
                         total_pending = sum(int(row[1].replace(',', '')) for row in gap_summary[1:])
-                        
+
                         # Display total pending sites
                         st.markdown("""
                             <div class="metric-card">
@@ -2942,13 +3013,13 @@ def main():
                                 <div class="metric-value">{:,}</div>
                             </div>
                         """.format(total_pending), unsafe_allow_html=True)
-                        
+
                         # Display top 3 delay categories
                         st.markdown("""
                             <div class="metric-card">
                                 <div class="metric-title">Top Delay Categories</div>
                         """, unsafe_allow_html=True)
-                        
+
                         for i, row in enumerate(gap_summary[1:4], 1):
                             st.markdown(f"""
                                 <div style="margin-bottom: 1rem;">
@@ -2957,79 +3028,74 @@ def main():
                                     <div class="metric-subtitle">{row[2]} of pending sites</div>
                                 </div>
                             """, unsafe_allow_html=True)
-                        
+
                         st.markdown("</div>", unsafe_allow_html=True)
-                
-                # Add detailed analysis table with improved styling
-                st.markdown("### Detailed Analysis")
-                st.markdown("""
-                    <style>
-                    .gap-summary {
-                        margin-top: 1rem;
-                        padding: 1rem;
-                        background-color: white;
-                        border-radius: 8px;
-                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                    }
-                    .gap-summary table {
-                        width: 100%;
-                        border-collapse: collapse;
-                    }
-                    .gap-summary th {
-                        background-color: #1a237e;
-                        color: white;
-                        padding: 12px;
-                        text-align: left;
-                    }
-                    .gap-summary td {
-                        padding: 12px;
-                        border-bottom: 1px solid #e0e0e0;
-                    }
-                    .gap-summary tr:nth-child(even) {
-                        background-color: #f8f9fa;
-                    }
-                    </style>
-                """, unsafe_allow_html=True)
-                
-                # Create table HTML
-                table_html = """
-                    <div class="gap-summary">
-                    <table>
-                    <tr>
-                        <th>{0}</th>
-                        <th>{1}</th>
-                        <th>{2}</th>
-                    </tr>
-                    {3}
-                    </table>
-                    </div>
-                """.format(
-                    gap_summary[0][0],  # Category header
-                    gap_summary[0][1],  # Count header
-                    gap_summary[0][2],  # Percentage header
-                    "\n".join(
-                        f"<tr><td>{row[0]}</td><td>{row[1]}</td><td>{row[2]}</td></tr>"
-                        for row in gap_summary[1:]
+
+                # Add detailed analysis table with improved styling below the charts/metrics area
+                if gap_summary is not None:
+                    st.markdown("### Detailed Analysis")
+                    st.markdown("""
+                        <style>
+                        .gap-summary {
+                            margin-top: 1rem;
+                            padding: 1rem;
+                            background-color: white;
+                            border-radius: 8px;
+                            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                        }
+                        .gap-summary table {
+                            width: 100%;
+                            border-collapse: collapse;
+                        }
+                        .gap-summary th {
+                            background-color: #1a237e;
+                            color: white;
+                            padding: 12px;
+                            text-align: left;
+                        }
+                        .gap-summary td {
+                            padding: 12px;
+                            border-bottom: 1px solid #e0e0e0;
+                        }
+                        .gap-summary tr:nth-child(even) {
+                            background-color: #f8f9fa;
+                        }
+                        </style>
+                    """, unsafe_allow_html=True)
+
+                    # Create table HTML
+                    table_html = """
+                        <div class="gap-summary">
+                        <table>
+                        <tr>
+                            <th>{0}</th>
+                            <th>{1}</th>
+                            <th>{2}</th>
+                        </tr>
+                        {3}
+                        </table>
+                        </div>
+                    """.format(
+                        gap_summary[0][0],  # Category header
+                        gap_summary[0][1],  # Count header
+                        gap_summary[0][2],  # Percentage header
+                        "\n".join(
+                            f"<tr><td>{row[0]}</td><td>{row[1]}</td><td>{row[2]}</td></tr>"
+                            for row in gap_summary[1:]
+                        )
                     )
-                )
-                st.markdown(table_html, unsafe_allow_html=True)
+                    st.markdown(table_html, unsafe_allow_html=True)
+            else:
+                st.warning("Could not generate GAP Analysis visualizations.")
 
         # Add Cluster Swap Milestone tab
         with tab7:
             if selected_sheet in ["BTB PROJECT_NOKIA_SWAP(349)", "ALU PROJECT_ALU&HW_SWAP(185)"]:
-                st.markdown("### 📍 Cluster Implementation Timeline")
-                st.markdown("""
-                This visualization shows the implementation timeline for each cluster, with status indicators:
-                - ✓ Completed: All sites in the cluster are completed
-                - ◔ In Progress: Some sites are completed, others pending
-                - ○ Not Started: No sites completed yet
-                """)
-                
                 milestone_fig, milestone_summary, timeline_df = create_cluster_milestone_analysis(df)
                 
                 if milestone_fig is not None:
                     # Display the main visualization
-                    st.plotly_chart(milestone_fig, use_container_width=True)
+                    # st.plotly_chart(milestone_fig, use_container_width=True) # <-- Commented out this line
                     
                     # Display summary metrics in columns
                     st.markdown("#### Summary Metrics")
@@ -3083,7 +3149,7 @@ def main():
                                             <h4 style='margin: 0;'>{row['Cluster ID']}</h4>
                                             <p style='margin: 0.5rem 0;'>
                                                 Progress: {row['Progress']}<br>
-                                                Target: {row['Forecast Date']}<br>
+                                                Target: {row['Forecast Date Display']}<br>
                                                 {f"Completed: {row['Completion Date']}" if status == 'Completed' else f"Pending: {row['Pending Sites']} sites"}
                                             </p>
                                         </div>
@@ -3131,10 +3197,20 @@ def main():
                     return
                 
                 # Generate PDF with charts
+                milestone_summary = None # Initialize
+                if selected_sheet in ["BTB PROJECT_NOKIA_SWAP(349)", "ALU PROJECT_ALU&HW_SWAP(185)"]:
+                    try:
+                        # We need the summary data for the PDF
+                        _, milestone_summary, _ = create_cluster_milestone_analysis(df)
+                    except Exception as e:
+                        st.warning(f"Could not generate milestone data for PDF: {e}")
+                        milestone_summary = None # Ensure it's None if error
+
                 pdf_output = generate_simple_pdf_report(
                     df,
                     load_shapefile(),
-                    selected_sheet
+                    selected_sheet,
+                    milestone_summary=milestone_summary # Pass the summary data
                 )
                 
                 if pdf_output:
