@@ -2362,8 +2362,8 @@ def create_gap_oa_analysis(df):
             '#2E5077', '#00A878', '#FF8C42', '#E63946', '#9381FF',
             '#F7B801', '#8AC926', '#48CAE4', '#FF6B6B', '#4A4E69'
         ]
-        # Generate slightly transparent colors for Sankey links (adjust alpha for visibility)
-        link_colors = [f"rgba({int(c[1:3], 16)}, {int(c[3:5], 16)}, {int(c[5:7], 16)}, 0.3)" for c in colors]
+        # Generate slightly transparent colors for Sankey links (adjust alpha for better visibility)
+        link_colors = [f"rgba({int(c[1:3], 16)}, {int(c[3:5], 16)}, {int(c[5:7], 16)}, 0.5)" for c in colors]
 
         # --- Pie Chart Generation (Existing Code - Unchanged) ---
         pie_fig = go.Figure()
@@ -2391,34 +2391,41 @@ def create_gap_oa_analysis(df):
             ]
         )
 
-        # --- Sankey Diagram Generation (Enhanced Styling) ---
+        # --- Sankey Diagram Generation (Improved Styling) ---
         sankey_fig = go.Figure()
 
         # Prepare data for Sankey
-        # Create labels with category, count, and percentage
-        node_labels = [f"Total Pending<br>{total_pending:,}"] + [
-            f"{cat}<br>{count:,} ({pct:.1f}%)<extra></extra>" # Add <extra> to ensure hover works correctly
+        # Create clean labels with category, count, and percentage
+        node_labels = [f"Total Pending<br><b>{total_pending:,}</b>"] + [
+            f"{cat}<br><b>{count:,}</b> ({pct:.1f}%) " # Add space for padding, removed <extra>
             for cat, count, pct in zip(gap_df['Category'], gap_df['Count'], gap_df['Percentage'])
         ]
         source_indices = [0] * len(gap_df) # Source is always "Total Pending" (index 0)
         target_indices = list(range(1, len(gap_df) + 1)) # Targets are categories (index 1 onwards)
         values = gap_df['Count'].tolist()
 
+        # Create hover labels for nodes (simpler than putting everything in the label)
+        node_hover_labels = [f"Total Pending Sites: {total_pending:,}"] + [
+            f"Category: {cat}<br>Count: {count:,}<br>Percentage: {pct:.1f}%<extra></extra>"
+            for cat, count, pct in zip(gap_df['Category'], gap_df['Count'], gap_df['Percentage'])
+        ]
+
         sankey_fig.add_trace(go.Sankey(
             arrangement='snap', # Align nodes vertically
             node=dict(
-                pad=20, # Increased padding between nodes
-                thickness=25, # Slightly thicker nodes
+                pad=20,
+                thickness=20, # Adjusted thickness
                 line=dict(color="black", width=0.5),
-                label=node_labels, # Use the enhanced labels
-                color=["rgba(128, 128, 128, 0.7)"] + colors[:len(gap_df)], # Make source node grey
-                hovertemplate='Category: %{label}<extra></extra>' # Simple hover for node (data is in label)
+                label=node_labels, # Use the cleaner labels for display
+                color=["rgba(150, 150, 150, 0.8)"] + colors[:len(gap_df)], # Make source node grey
+                hovertemplate='%{customdata}', # Use custom data for hover
+                customdata=node_hover_labels # Assign the detailed hover labels
             ),
             link=dict(
                 source=source_indices,
                 target=target_indices,
                 value=values,
-                color=link_colors[:len(gap_df)], # Use more transparent colors for links
+                color=link_colors[:len(gap_df)], # Use slightly more visible link colors
                 hovertemplate='Flow Count: %{value:,}<extra></extra>' # Hover info for links
             )
         ))
@@ -2433,11 +2440,11 @@ def create_gap_oa_analysis(df):
                 yanchor="top",
                 pad=dict(b=20)
             ),
-            height=max(500, len(gap_df) * 50), # Increase height based on number of categories
+            height=max(500, len(gap_df) * 45), # Adjust height based on number of categories slightly
             margin=dict(l=20, r=20, t=80, b=20),
             paper_bgcolor='white',
             plot_bgcolor='white',
-            font=dict(size=11) # Adjust overall font size if needed
+            font=dict(size=11, color="black") # Ensure font color is visible
         )
 
         # --- Summary Table Data --- 
