@@ -2844,11 +2844,45 @@ def create_overall_project_summary(df_forecast, df_actual):
     # Calculate next week's forecast (similar to individual sheet logic)
     next_week_forecast_count = 0
     next_week_dates_str = "N/A"
+    # Calculate current week progress (similar to individual sheet logic)
+    current_week_forecast_count = 0
+    current_week_actual_count = 0
+    current_week_dates_str = "N/A"
+    current_week_performance = 0
+    current_week_color = '#DC3545' # Default red
+
     if not df_forecast.empty:
         current_date = datetime.now()
-        current_week_start = current_date - pd.Timedelta(days=current_date.weekday()) # Monday
-        current_week_start = current_week_start.replace(hour=0, minute=0, second=0, microsecond=0)
-        next_week_start_dt = current_week_start + pd.Timedelta(days=7)
+        # Get current ISO week start (Monday) and end (Sunday)
+        current_week_start_dt = current_date - pd.Timedelta(days=current_date.isocalendar()[2] - 1)
+        current_week_start_dt = current_week_start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        current_week_end_dt = current_week_start_dt + pd.Timedelta(days=7)
+        
+        # Filter forecast data for current week
+        current_week_forecast_df = df_forecast[
+            (df_forecast["forecast oa date"] >= current_week_start_dt) & 
+            (df_forecast["forecast oa date"] < current_week_end_dt)
+        ]
+        current_week_forecast_count = len(current_week_forecast_df)
+
+        # Filter actual data for current week (up to today)
+        if not df_actual.empty:
+            current_week_actual_df = df_actual[
+                (df_actual["oa actual"] >= current_week_start_dt) & 
+                (df_actual["oa actual"] <= current_date) # Up to the current moment
+            ]
+            current_week_actual_count = len(current_week_actual_df)
+        
+        # Calculate current week performance
+        current_week_performance = (current_week_actual_count / current_week_forecast_count * 100) if current_week_forecast_count > 0 else (100 if current_week_actual_count > 0 else 0)
+        current_week_color = '#28A745' if current_week_performance >= 100 else ('#FFC107' if current_week_performance >= 50 else '#DC3545')
+
+        # Format current week dates for display
+        current_week_iso = current_week_start_dt.isocalendar()
+        current_week_dates_str = f"Week {current_week_iso[1]} ({current_week_start_dt.strftime('%d %b')} - {(current_week_end_dt - pd.Timedelta(days=1)).strftime('%d %b')})"
+        
+        # --- Calculate Next Week --- (Moved calculation together)
+        next_week_start_dt = current_week_end_dt # Starts right after current week ends
         next_week_end_dt = next_week_start_dt + pd.Timedelta(days=7)
         
         # Filter forecast data for next week
@@ -2864,7 +2898,7 @@ def create_overall_project_summary(df_forecast, df_actual):
         
     # Calculate projected achievement for next week
     projected_completion = recent_avg_weekly # Use recent average rate as projection
-    projected_performance = (projected_completion / next_week_forecast_count * 100) if next_week_forecast_count > 0 else 0
+    projected_performance = (projected_completion / next_week_forecast_count * 100) if next_week_forecast_count > 0 else (100 if projected_completion > 0 else 0) # Adjusted logic for 0 forecast
     projected_color = '#28A745' if projected_performance >= 100 else ('#FFC107' if projected_performance >= 50 else '#DC3545') # Green, Yellow, Red
 
     summary_html = f"""
@@ -2900,6 +2934,14 @@ def create_overall_project_summary(df_forecast, df_actual):
                 </div>
                 <div style="font-size: 0.9em; color: #666; margin-top: 5px;">
                     *Based on overall average weekly performance
+                </div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-item-header">Current Week Progress (Overall)</div>
+                <div>Period: {current_week_dates_str}</div>
+                <div>Completed: {current_week_actual_count:,} of {current_week_forecast_count:,} sites</div>
+                <div style="color: {current_week_color}">
+                    Progress This Week: {current_week_performance:.1f}%
                 </div>
             </div>
         </div>
